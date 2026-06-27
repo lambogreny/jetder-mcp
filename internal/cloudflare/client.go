@@ -323,7 +323,12 @@ func (c *Client) ListDNSRecords(ctx context.Context, zoneID, recType, name strin
 // CreateDNSResult reports the outcome of an idempotent create.
 type CreateDNSResult struct {
 	Record        DNSRecord
-	AlreadyExists bool // a record with the same type+name+content already existed
+	AlreadyExists bool // a record with the same type+name+content+proxied already existed
+	// ProxiedUpdated is true when an existing record had the same type+name+content
+	// but a different proxied status, and we PATCHed it to the requested value. This
+	// is how an already-present DNS-only (grey) record gets flipped to proxied
+	// (orange) — without it, the idempotent path would silently leave it unchanged.
+	ProxiedUpdated bool
 }
 
 // CreateDNSRecord idempotently creates a record. It preflights by listing ALL
@@ -334,8 +339,11 @@ type CreateDNSResult struct {
 //   - CNAME vs any other type, or NS vs non-NS → conflict.
 //   - different non-special types (e.g. A + TXT) → coexist, POST a new record.
 //
-// ttl defaults to 1 (auto) and proxied defaults to false (appropriate for Jetder
-// verification + pointing) unless the caller overrides.
+// ttl defaults to 1 (auto). The caller sets rec.Proxied explicitly — the cf-dns-create
+// tool auto-selects it per record type (A/AAAA/CNAME proxied for instant SSL, other
+// types DNS-only); this layer just writes whatever the caller passed. If a record with
+// the same type+name+content already exists but with a different proxied status, it is
+// PATCHed to match (ProxiedUpdated) rather than reported as an unchanged AlreadyExists.
 func (c *Client) CreateDNSRecord(ctx context.Context, zoneID string, rec DNSRecord) (*CreateDNSResult, error) {
 	if rec.Type == "" || rec.Name == "" || rec.Content == "" {
 		return nil, errors.New("dns record requires type, name and content")
@@ -356,9 +364,21 @@ func (c *Client) CreateDNSRecord(ctx context.Context, zoneID string, rec DNSReco
 			continue
 		}
 		if conflictReason := dnsConflict(e, rec); conflictReason != "" {
-			// idempotent no-op: identical record already present.
+			// Same type+content already present.
 			if strings.EqualFold(e.Type, rec.Type) && e.Content == rec.Content {
-				return &CreateDNSResult{Record: e, AlreadyExists: true}, nil
+				// If the proxied status already matches, it's a true idempotent no-op.
+				if e.Proxied == rec.Proxied {
+					return &CreateDNSResult{Record: e, AlreadyExists: true}, nil
+				}
+				// Same record, different proxy status: PATCH the proxied flag so an
+				// existing grey (DNS-only) record gets flipped to orange (proxied).
+				// Never report AlreadyExists silently — that would leave the cert/UX
+				// bug unfixed. We touch ONLY the proxied field of this exact record id.
+				updated, err := c.updateDNSProxied(ctx, zoneID, e, rec.Proxied)
+				if err != nil {
+					return nil, err
+				}
+				return &CreateDNSResult{Record: *updated, ProxiedUpdated: true}, nil
 			}
 			return nil, fmt.Errorf("conflict: cannot create %s %q: %s (existing %s %q); not overwriting",
 				rec.Type, rec.Name, conflictReason, e.Type, e.Content)
@@ -370,6 +390,29 @@ func (c *Client) CreateDNSRecord(ctx context.Context, zoneID string, rec DNSReco
 		return nil, err
 	}
 	return &CreateDNSResult{Record: created}, nil
+}
+
+// updateDNSProxied PATCHes only the proxied flag of an existing record (by id),
+// preserving its type/name/content/ttl. Used to flip a present DNS-only record to
+// proxied (or vice versa) when create() finds the same record with a different
+// proxy status. It returns the updated record.
+func (c *Client) updateDNSProxied(ctx context.Context, zoneID string, existing DNSRecord, proxied bool) (*DNSRecord, error) {
+	if existing.ID == "" {
+		return nil, errors.New("cannot update proxied status: existing record has no id")
+	}
+	// CF PATCH on a DNS record requires the full record body; send the existing
+	// values with only proxied changed (TTL must be 1/auto for proxied records).
+	ttl := existing.TTL
+	if proxied {
+		ttl = 1 // proxied records are always TTL auto
+	}
+	body := DNSRecord{Type: existing.Type, Name: existing.Name, Content: existing.Content, TTL: ttl, Proxied: proxied}
+	var updated DNSRecord
+	path := "/zones/" + url.PathEscape(zoneID) + "/dns_records/" + url.PathEscape(existing.ID)
+	if err := c.do(ctx, http.MethodPatch, path, body, &updated); err != nil {
+		return nil, err
+	}
+	return &updated, nil
 }
 
 // dnsConflict reports why an existing record e conflicts with a record we want to

@@ -218,18 +218,46 @@ type CFDNSCreateInput struct {
 	Type    string `json:"type" jsonschema:"record type (A, AAAA, CNAME, TXT)"`
 	Name    string `json:"name" jsonschema:"record name (fully-qualified)"`
 	Content string `json:"content" jsonschema:"record content/value"`
+	// Proxied: nil = AUTO (A/AAAA/CNAME → proxied/orange for instant Cloudflare
+	// Universal SSL; other types → DNS-only). true = force proxied, false = DNS-only.
+	// Records pointing into a deployment should be proxied to avoid a TLS warning
+	// while the origin certificate provisions.
+	Proxied *bool `json:"proxied,omitempty" jsonschema:"proxy through Cloudflare (orange cloud). Omit for auto: A/AAAA/CNAME proxied (instant SSL), others DNS-only. true=proxied, false=DNS-only. Only A/AAAA/CNAME can be proxied."`
 }
 
 type CFDNSCreateOutput struct {
-	ZoneID        string      `json:"zoneId"`
-	Record        CFDNSRecord `json:"record"`
-	AlreadyExists bool        `json:"alreadyExists" jsonschema:"true if an identical record already existed (no change made)"`
+	ZoneID         string      `json:"zoneId"`
+	Record         CFDNSRecord `json:"record"`
+	AlreadyExists  bool        `json:"alreadyExists" jsonschema:"true if an identical record (incl. proxied status) already existed (no change made)"`
+	ProxiedUpdated bool        `json:"proxiedUpdated" jsonschema:"true if an existing record's proxied status was changed to match the request"`
+}
+
+// proxiableTypes are the DNS record types Cloudflare can proxy (orange cloud).
+var proxiableTypes = map[string]bool{"A": true, "AAAA": true, "CNAME": true}
+
+// resolveProxied decides the proxied flag for a create. typ is the record type;
+// req is the caller's *bool (nil = auto). Auto proxies A/AAAA/CNAME (for instant
+// Universal SSL) and leaves everything else DNS-only. An explicit true on a
+// non-proxiable type is an error (Cloudflare only proxies A/AAAA/CNAME).
+func resolveProxied(typ string, req *bool) (bool, error) {
+	proxiable := proxiableTypes[strings.ToUpper(strings.TrimSpace(typ))]
+	if req == nil {
+		return proxiable, nil // auto
+	}
+	if *req && !proxiable {
+		return false, fmt.Errorf("proxied=true is invalid for a %s record: only A, AAAA and CNAME records can be proxied", strings.ToUpper(typ))
+	}
+	return *req, nil
 }
 
 func registerCFDNSCreate(server *mcp.Server, cf *cloudflare.Client) {
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "cf-dns-create",
-		Description: "Create a Cloudflare DNS record (idempotent: skips if identical, errors on conflict; never overwrites). Defaults ttl=auto, proxied=false.",
+		Name: "cf-dns-create",
+		Description: "Create a Cloudflare DNS record (idempotent; never overwrites a different record). " +
+			"proxied defaults to AUTO: A/AAAA/CNAME are proxied (orange cloud) for instant Cloudflare " +
+			"Universal SSL — avoiding a browser TLS warning while the origin cert provisions — and other " +
+			"types are DNS-only. If the record already exists with a different proxied status, it is updated " +
+			"to match (proxiedUpdated=true). ttl defaults to auto.",
 		Annotations: destructive(), // public DNS change can route/break traffic
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in CFDNSCreateInput) (*mcp.CallToolResult, CFDNSCreateOutput, error) {
 		if cf == nil {
@@ -237,6 +265,10 @@ func registerCFDNSCreate(server *mcp.Server, cf *cloudflare.Client) {
 		}
 		if in.Type == "" || in.Name == "" || in.Content == "" {
 			return nil, CFDNSCreateOutput{}, fmt.Errorf("type, name and content are required")
+		}
+		proxied, err := resolveProxied(in.Type, in.Proxied)
+		if err != nil {
+			return nil, CFDNSCreateOutput{}, err
 		}
 		zoneID := in.ZoneID
 		if zoneID == "" {
@@ -246,16 +278,19 @@ func registerCFDNSCreate(server *mcp.Server, cf *cloudflare.Client) {
 			}
 			zoneID = z.ID
 		}
-		res, err := cf.CreateDNSRecord(ctx, zoneID, cloudflare.DNSRecord{Type: in.Type, Name: in.Name, Content: in.Content})
+		res, err := cf.CreateDNSRecord(ctx, zoneID, cloudflare.DNSRecord{Type: in.Type, Name: in.Name, Content: in.Content, Proxied: proxied})
 		if err != nil {
 			return nil, CFDNSCreateOutput{}, err
 		}
-		out := CFDNSCreateOutput{ZoneID: zoneID, Record: toCFRecord(res.Record), AlreadyExists: res.AlreadyExists}
+		out := CFDNSCreateOutput{ZoneID: zoneID, Record: toCFRecord(res.Record), AlreadyExists: res.AlreadyExists, ProxiedUpdated: res.ProxiedUpdated}
 		verb := "created"
-		if res.AlreadyExists {
+		switch {
+		case res.ProxiedUpdated:
+			verb = fmt.Sprintf("updated proxied=%t for", proxied)
+		case res.AlreadyExists:
 			verb = "already exists"
 		}
-		return textResult(fmt.Sprintf("%s %s %s [zone=%s]", verb, in.Type, in.Name, zoneID)), out, nil
+		return textResult(fmt.Sprintf("%s %s %s [zone=%s proxied=%t]", verb, in.Type, in.Name, zoneID, out.Record.Proxied)), out, nil
 	})
 }
 

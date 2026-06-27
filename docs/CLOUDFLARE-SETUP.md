@@ -147,6 +147,33 @@ Arguments: `domain` + `deployment` (required), `project` / `location` / `path` /
 `registerDomain` (optional). The prompt never buys a domain on its own — it always
 stops for explicit approval before registering.
 
+## DNS proxying & instant SSL (`cf-dns-create` `proxied`)
+
+When you point a domain at a deployment, you want a **valid HTTPS certificate
+immediately** — not a browser "your connection is not private" warning while the
+origin's certificate provisions. `cf-dns-create` handles this for you:
+
+- **`proxied` defaults to AUTO.** `A`/`AAAA`/`CNAME` records are created **proxied**
+  (orange cloud), so Cloudflare's Universal SSL serves a valid edge certificate
+  right away. `TXT`/`MX`/other types stay **DNS-only** (only `A`/`AAAA`/`CNAME` can
+  be proxied at all).
+- Pass `proxied: false` to force a record **DNS-only** (grey cloud) — e.g. a
+  record that must resolve straight to the origin. Passing `proxied: true` on a
+  non-proxiable type (like `TXT`) is rejected with a clear error.
+- If a record already exists but with the **wrong** proxy status (e.g. an old
+  DNS-only `A` record), `cf-dns-create` **updates it** to match
+  (`proxiedUpdated: true`) instead of silently reporting "already exists".
+
+> ⚠️ **SSL/TLS encryption mode.** Proxying gives the *visitor* a valid Cloudflare
+> certificate. Cloudflare → origin uses the zone's **SSL/TLS mode**. While the
+> origin still serves a self-signed/placeholder certificate (e.g. right after a
+> Jetder deployment, before its Let's Encrypt cert issues), the mode must be
+> **Full** or **Automatic** — **Full (strict)** will return a `526` until the
+> origin certificate is valid. Domains bought through Cloudflare Registrar default
+> to **Automatic SSL/TLS**, which is fine. This server cannot read or set the SSL
+> mode (the API token would need Zone Settings scope); set it in the Cloudflare
+> dashboard if needed.
+
 ## Security
 
 - Use the **narrowest** token scope you need; prefer per-zone over all-zones.

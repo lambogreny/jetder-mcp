@@ -172,6 +172,23 @@ func TestPrompt_DnsHostCloudflare_Auto(t *testing.T) {
 	if !strings.Contains(text, "cf-dns-create") {
 		t.Fatalf("dnsHost=cloudflare must use cf-dns-create:\n%s", text)
 	}
+	// The prompt must instruct EXPLICIT proxied per record role — not rely on the
+	// tool's auto-default. pointTo records proxied:true; verification records
+	// proxied:false (so a future CNAME verification record is never auto-proxied).
+	for _, want := range []string{
+		"proxied:true",  // pointTo / traffic targets
+		"proxied:false", // ownership + ssl verification records
+		"pointTo",
+		"verification record", // never proxy a verification record
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("cloudflare DNS playbook must contain %q (explicit proxied per role):\n%s", want, text)
+		}
+	}
+	// Guard against regressing to the auto-only wording.
+	if strings.Contains(text, "Leave proxied UNSET") {
+		t.Fatalf("prompt must set proxied explicitly, not leave it unset:\n%s", text)
+	}
 }
 
 func TestPrompt_DnsHostInvalid(t *testing.T) {
