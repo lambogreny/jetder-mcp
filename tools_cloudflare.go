@@ -48,8 +48,8 @@ type CFDomainOffer struct {
 func toCFOffer(o cloudflare.DomainOffer) CFDomainOffer {
 	return CFDomainOffer{
 		Name: o.Name, Registrable: o.Registrable, Tier: o.Tier,
-		Currency: o.Pricing.Currency, RegistrationCost: o.Pricing.RegistrationCost,
-		RenewalCost: o.Pricing.RenewalCost, Reason: o.Reason,
+		Currency: o.Pricing.Currency, RegistrationCost: o.Pricing.RegistrationCost.Float(),
+		RenewalCost: o.Pricing.RenewalCost.Float(), Reason: o.Reason,
 	}
 }
 

@@ -151,8 +151,22 @@ mcp/
   tools_resources_read.go    # billing/disk/sa/role/secret/pullsecret/wi/org reads
   tools_resources_write.go   # disk/secret/pullsecret/wi/sa/org/role create+update
   tools_grants_email.go      # role grant/bind, sa create-key, email send
+  tools_cloudflare.go        # cf-* tools (DNS + Registrar)
+  prompt_point_a_domain.go   # "point-a-domain" guided MCP prompt
   internal/jetder/
-    client.go                # adapter: client construction, basic auth, redaction, defaults
+    client.go                # adapter: jetder basic auth, redaction, defaults
+  internal/cloudflare/
+    client.go                # Cloudflare zone + DNS client (Bearer, idempotent)
+    registrar.go             # Cloudflare Registrar (search/check/register + purchase guard)
+  scripts/mcp-deploy/        # CI deploy helper (drives the server)
+  docs/DEPLOY.md             # CI/CD deploy guide
+  docs/CLOUDFLARE-SETUP.md   # Cloudflare token/account setup + cf tools + point-a-domain
   go.mod
   README.md
 ```
+
+## More docs
+
+- [docs/DEPLOY.md](./docs/DEPLOY.md) — CI/CD: build → GHCR → deploy via MCP.
+- [docs/CLOUDFLARE-SETUP.md](./docs/CLOUDFLARE-SETUP.md) — Cloudflare DNS + domain
+  registration, and the `point-a-domain` guided prompt.

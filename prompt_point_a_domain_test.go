@@ -123,6 +123,25 @@ func TestPrompt_RegisterDomainConditional(t *testing.T) {
 	}
 }
 
+func TestPrompt_DomainLowercased(t *testing.T) {
+	cs := connectWithCF(t, cfOK(`{"success":true,"result":[]}`))
+	gp, err := cs.GetPrompt(context.Background(), &mcp.GetPromptParams{
+		Name:      "point-a-domain",
+		Arguments: map[string]string{"domain": "App.Example.COM", "deployment": "web", "registerDomain": "true"},
+	})
+	if err != nil {
+		t.Fatalf("GetPrompt: %v", err)
+	}
+	text := gp.Messages[0].Content.(*mcp.TextContent).Text
+	// confirmText must be the lowercased domain (matches registrar guard).
+	if !strings.Contains(text, "REGISTER app.example.com") {
+		t.Fatalf("expected lowercased confirmText:\n%s", text)
+	}
+	if strings.Contains(text, "App.Example.COM") {
+		t.Fatalf("domain should be canonicalized to lowercase:\n%s", text)
+	}
+}
+
 func TestPrompt_MissingArgs(t *testing.T) {
 	cs := connectWithCF(t, cfOK(`{"success":true,"result":[]}`))
 	_, err := cs.GetPrompt(context.Background(), &mcp.GetPromptParams{

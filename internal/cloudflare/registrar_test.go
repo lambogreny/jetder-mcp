@@ -227,11 +227,110 @@ func TestRegistrationStatus(t *testing.T) {
 	}
 }
 
-// guard against accidental JSON shape drift in DomainOffer.
-func TestDomainOffer_JSON(t *testing.T) {
+// guard against accidental JSON shape drift in DomainOffer. Cloudflare returns
+// price as a STRING ("9.50"); decode must yield the numeric value.
+func TestDomainOffer_JSON_StringPrice(t *testing.T) {
 	var o DomainOffer
-	_ = json.Unmarshal([]byte(`{"name":"x.com","registrable":true,"tier":"standard","pricing":{"currency":"USD","registration_cost":9.5,"renewal_cost":9.5}}`), &o)
-	if o.Name != "x.com" || !o.Registrable || o.Pricing.RegistrationCost != 9.5 {
-		t.Fatalf("decode mismatch: %+v", o)
+	if err := json.Unmarshal([]byte(`{"name":"x.com","registrable":true,"tier":"standard","pricing":{"currency":"USD","registration_cost":"9.50","renewal_cost":"12.00"}}`), &o); err != nil {
+		t.Fatalf("decode string price failed: %v", err)
 	}
+	if o.Pricing.RegistrationCost.Float() != 9.5 || o.Pricing.RenewalCost.Float() != 12.0 {
+		t.Fatalf("string price not parsed: %+v", o.Pricing)
+	}
+}
+
+// also accept a numeric price (some fields/responses may use a number).
+func TestDomainOffer_JSON_NumberPrice(t *testing.T) {
+	var o DomainOffer
+	if err := json.Unmarshal([]byte(`{"name":"x.com","pricing":{"currency":"USD","registration_cost":9.5}}`), &o); err != nil {
+		t.Fatalf("decode number price failed: %v", err)
+	}
+	if o.Pricing.RegistrationCost.Float() != 9.5 {
+		t.Fatalf("number price not parsed: %+v", o.Pricing)
+	}
+}
+
+// TestPrice_RejectsNonFinite: NaN/Inf must fail to decode (they would slip past
+// the guard's comparisons and allow a buy on an invalid price).
+func TestPrice_RejectsNonFinite(t *testing.T) {
+	for _, bad := range []string{`"NaN"`, `"+Inf"`, `"-Inf"`, `"Infinity"`} {
+		var p price
+		if err := json.Unmarshal([]byte(bad), &p); err == nil {
+			t.Fatalf("price %s should fail to decode, got %v", bad, float64(p))
+		}
+	}
+	// sanity: a finite string still works.
+	var p price
+	if err := json.Unmarshal([]byte(`"10.46"`), &p); err != nil || p.Float() != 10.46 {
+		t.Fatalf("finite price failed: %v / %v", err, p.Float())
+	}
+}
+
+// TestRegister_NonFiniteStringPriceRejectsNoPost: live check returns "NaN" → the
+// pre-buy check must fail and NO register POST may happen.
+func TestRegister_NonFiniteStringPriceRejectsNoPost(t *testing.T) {
+	posted := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/registrar/domain-check") {
+			_, _ = w.Write([]byte(`{"success":true,"errors":[],"result":{"domains":[{"name":"example.com","registrable":true,"tier":"standard","pricing":{"currency":"USD","registration_cost":"NaN"}}]}}`))
+			return
+		}
+		posted = true
+		_, _ = w.Write([]byte(ok(RegistrationResult{})))
+	}))
+	defer srv.Close()
+	c := &Client{httpClient: srv.Client(), baseURL: srv.URL, token: "t", accountID: "a", redactions: []string{"t"}}
+	_, err := c.Register(context.Background(), "", "example.com", goodConf(), RegisterOptions{})
+	if err == nil {
+		t.Fatal("expected rejection on NaN price")
+	}
+	if posted {
+		t.Fatal("MONEY: must not POST on non-finite price")
+	}
+}
+
+// TestRegister_StringPriceGuard: the LIVE check returns a string price; the guard
+// must compare it correctly (not treat it as 0 or error).
+func TestRegister_StringPriceGuard(t *testing.T) {
+	t.Run("string price within max → buy", func(t *testing.T) {
+		posted := false
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasSuffix(r.URL.Path, "/registrar/domain-check") {
+				_, _ = w.Write([]byte(`{"success":true,"errors":[],"result":{"domains":[{"name":"example.com","registrable":true,"tier":"standard","pricing":{"currency":"USD","registration_cost":"10.46"}}]}}`))
+				return
+			}
+			posted = true
+			_, _ = w.Write([]byte(ok(RegistrationResult{DomainName: "example.com", State: StateInProgress})))
+		}))
+		defer srv.Close()
+		c := &Client{httpClient: srv.Client(), baseURL: srv.URL, token: "t", accountID: "a", redactions: []string{"t"}}
+		conf := goodConf()
+		conf.MaxRegistrationCost = 12.0 // covers 10.46
+		if _, err := c.Register(context.Background(), "", "example.com", conf, RegisterOptions{}); err != nil {
+			t.Fatalf("string price 10.46 <= max 12 should buy, got %v", err)
+		}
+		if !posted {
+			t.Fatal("expected POST")
+		}
+	})
+	t.Run("string price exceeds max → reject", func(t *testing.T) {
+		posted := false
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasSuffix(r.URL.Path, "/registrar/domain-check") {
+				_, _ = w.Write([]byte(`{"success":true,"errors":[],"result":{"domains":[{"name":"example.com","registrable":true,"tier":"standard","pricing":{"currency":"USD","registration_cost":"99.99"}}]}}`))
+				return
+			}
+			posted = true
+			_, _ = w.Write([]byte(ok(RegistrationResult{})))
+		}))
+		defer srv.Close()
+		c := &Client{httpClient: srv.Client(), baseURL: srv.URL, token: "t", accountID: "a", redactions: []string{"t"}}
+		_, err := c.Register(context.Background(), "", "example.com", goodConf(), RegisterOptions{}) // max 12
+		if err == nil || !strings.Contains(err.Error(), "exceeds max") {
+			t.Fatalf("string price 99.99 should exceed max, got %v", err)
+		}
+		if posted {
+			t.Fatal("MONEY: must not POST when string price exceeds max")
+		}
+	})
 }

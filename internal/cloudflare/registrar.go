@@ -4,10 +4,45 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 )
+
+// price is a monetary amount that Cloudflare returns as a JSON STRING (e.g.
+// "10.46"), though some fields/responses may use a number. It decodes both so the
+// purchase guard always has a real numeric value (a wrong/zero price = money
+// danger). An empty/absent value decodes to 0.
+type price float64
+
+func (p *price) UnmarshalJSON(b []byte) error {
+	s := strings.TrimSpace(string(b))
+	if s == "null" || s == `""` || s == "" {
+		*p = 0
+		return nil
+	}
+	// strip surrounding quotes if it's a JSON string.
+	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
+		s = s[1 : len(s)-1]
+	}
+	f, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
+	if err != nil {
+		return fmt.Errorf("invalid price %q: %v", s, err)
+	}
+	// Reject non-finite values: NaN/Inf would slip past the guard's comparisons
+	// (every comparison with NaN is false), so the purchase could proceed on an
+	// invalid price. Fail closed on money data.
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		return fmt.Errorf("invalid price %q: not a finite number", s)
+	}
+	*p = price(f)
+	return nil
+}
+
+// Float returns the amount as a float64.
+func (p price) Float() float64 { return float64(p) }
 
 // Registrar (beta) endpoints are account-scoped and require a token with the
 // Registrar Write permission. See
@@ -30,9 +65,9 @@ func (c *Client) account(arg string) (string, error) {
 
 // Pricing mirrors the Cloudflare Registrar pricing object.
 type Pricing struct {
-	Currency         string  `json:"currency"`
-	RegistrationCost float64 `json:"registration_cost"`
-	RenewalCost      float64 `json:"renewal_cost"`
+	Currency         string `json:"currency"`
+	RegistrationCost price  `json:"registration_cost"` // CF returns this as a string
+	RenewalCost      price  `json:"renewal_cost"`
 }
 
 // DomainOffer is one search/check result.
@@ -189,8 +224,9 @@ func (c *Client) Register(ctx context.Context, accountArg, domain string, conf P
 		return nil, fmt.Errorf("purchase rejected: currency drift/missing — live %q vs accepted %q", offer.Pricing.Currency, conf.Currency)
 	}
 	// Fail-closed on missing/garbage price data — never spend on incomplete data.
-	if offer.Pricing.RegistrationCost <= 0 {
-		return nil, fmt.Errorf("purchase rejected: live registration cost missing/invalid (%.2f)", offer.Pricing.RegistrationCost)
+	regCost := offer.Pricing.RegistrationCost.Float()
+	if regCost <= 0 {
+		return nil, fmt.Errorf("purchase rejected: live registration cost missing/invalid (%.2f)", regCost)
 	}
 	// Fail-closed on missing tier — do NOT assume "standard" from an empty field.
 	if offer.Tier == "" {
@@ -206,10 +242,10 @@ func (c *Client) Register(ctx context.Context, accountArg, domain string, conf P
 	if years == 0 {
 		years = 1
 	}
-	totalCost := offer.Pricing.RegistrationCost * float64(years)
+	totalCost := regCost * float64(years)
 	if totalCost > conf.MaxRegistrationCost {
 		return nil, fmt.Errorf("purchase rejected: total cost %.2f %s (%.2f × %d yr) exceeds max %.2f %s",
-			totalCost, offer.Pricing.Currency, offer.Pricing.RegistrationCost, years, conf.MaxRegistrationCost, conf.Currency)
+			totalCost, offer.Pricing.Currency, regCost, years, conf.MaxRegistrationCost, conf.Currency)
 	}
 
 	// ---- guards passed: spend ----

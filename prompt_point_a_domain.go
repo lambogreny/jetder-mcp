@@ -68,6 +68,9 @@ func pointADomainHandler(_ context.Context, req *mcp.GetPromptRequest) (*mcp.Get
 	if err != nil {
 		return nil, err
 	}
+	// Canonicalize to lowercase so confirmText ("REGISTER <domain>") matches the
+	// registrar guard, which lowercases the domain before comparing.
+	domain = strings.ToLower(domain)
 	deployment, err := validateArg("deployment", args["deployment"], true, reName)
 	if err != nil {
 		return nil, err
