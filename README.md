@@ -4,9 +4,13 @@ An [MCP](https://modelcontextprotocol.io) (Model Context Protocol) server that
 exposes the [Jetder](https://jetder.com) API as MCP tools and resources, served
 over **stdio**.
 
-> **Status:** in progress. Tools for Me, Location, Project, Deployment
-> (read + deploy/pause/resume/rollback), and Domain/Route (custom domains and
-> routing) are implemented. Other resources follow in subsequent slices.
+> **Status:** feature-complete for the supported API surface (55 tools). Covers
+> Me, Location, Project, Deployment (read + deploy/pause/resume/rollback),
+> Domain/Route, Billing (read), Disk, ServiceAccount, Role, Secret/PullSecret
+> (redacted), WorkloadIdentity, Organization, and Email. Deferred resources
+> (EnvGroup, OrganizationRole, GitConnect, ActivityLog, Database) are not yet
+> reachable through the pinned API client; `*delete`, role revoke, and key
+> deletion are intentionally not exposed.
 
 ## Requirements
 
@@ -91,6 +95,9 @@ override the env defaults. Each tool reports the resolved context in its result.
 | `service-account-create` / `-update`| Create / rename a service account.    | `destructiveHint:false`|
 | `organization-create` / `-update`   | Create / rename an organization.      | `destructiveHint:false`|
 | `role-create`         | Create a role with permissions.                      | `destructiveHint:false`|
+| `role-grant`          | Grant a role to a user (additive).                   | `destructiveHint:false`|
+| `service-account-create-key` | Create a key for a service account.           | `destructiveHint:false`|
+| `email-send`          | Send an email from a project.                        | `destructiveHint:false`|
 
 > `deployment-delete`, `domain-delete`, and `route-delete` are intentionally not
 > exposed. Route V1 create is superseded by `route-create-v2`.
@@ -131,6 +138,7 @@ mcp/
   tools_route.go             # route create-v2/get/list
   tools_resources_read.go    # billing/disk/sa/role/secret/pullsecret/wi/org reads
   tools_resources_write.go   # disk/secret/pullsecret/wi/sa/org/role create+update
+  tools_grants_email.go      # role grant/bind, sa create-key, email send
   internal/jetder/
     client.go                # adapter: client construction, bearer auth, redaction, defaults
   go.mod

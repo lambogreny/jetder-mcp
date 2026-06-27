@@ -63,6 +63,7 @@ func buildServer(adapter *jetder.Adapter) *mcp.Server {
 	registerRouteTools(server, adapter)
 	registerResourceReadTools(server, adapter)
 	registerResourceWriteTools(server, adapter)
+	registerGrantsAndEmailTools(server, adapter)
 
 	return server
 }
