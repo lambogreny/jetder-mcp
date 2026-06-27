@@ -10,8 +10,16 @@ served over **stdio**.
 **1. Get access.** You need a Jetder API token (and a project) from the owner.
 Request one here: **<https://thunder.in.th/>**.
 
-**2. Install** (macOS / Linux, amd64 / arm64). The script downloads a release
-binary, verifies its SHA-256 checksum, and installs it to `~/.local/bin`:
+**2. Install** (macOS / Linux, amd64 / arm64).
+
+With **Homebrew**:
+
+```sh
+brew install lambogreny/tap/jetder-mcp
+```
+
+Or with the install script (downloads a release binary, verifies its SHA-256
+checksum, and installs it to `~/.local/bin`):
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/lambogreny/jetder-mcp/main/install.sh | sh
