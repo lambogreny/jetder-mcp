@@ -302,6 +302,8 @@ mcp/
 
 ## More docs
 
+- **[docs/ONBOARDING.md](./docs/ONBOARDING.md) — new here?** a friendly,
+  start-from-zero guide: what this is, what you need, install in 3 steps, first run.
 - **[docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) — the big picture:** what the
   server does, how it connects to Jetder / Cloudflare / GHCR, flow diagrams, the full
   capability list, and the security model.
