@@ -69,12 +69,20 @@ claude mcp add -e JETDER_AUTH_USER=<svc>@<project>.serviceaccount.jetder.com \
 
 ### Claude Desktop
 
-**One-click (macOS):** download the `.mcpb` bundle for your Mac's architecture from
-the [latest release](https://github.com/lambogreny/jetder-mcp/releases/latest) —
-`jetder-mcp_darwin_arm64.mcpb` (Apple Silicon) or `jetder-mcp_darwin_amd64.mcpb`
-(Intel) — then open **Settings → Extensions → Install Extension** and select it.
-Claude Desktop prompts you for your **Jetder email** and **API token** (the token is
-masked and stored securely); no JSON editing. Get access at <https://thunder.in.th/>.
+**One-click bundle.** Download the `.mcpb` for your platform from the
+[latest release](https://github.com/lambogreny/jetder-mcp/releases/latest):
+
+| Platform | Bundle |
+|----------|--------|
+| macOS (Apple Silicon) | `jetder-mcp_darwin_arm64.mcpb` |
+| macOS (Intel) | `jetder-mcp_darwin_amd64.mcpb` |
+| Windows (x64) | `jetder-mcp_windows_amd64.mcpb` |
+
+Then open **Settings → Extensions → Install Extension** (on Windows, under
+**Advanced settings**) and select the file. Claude Desktop prompts you for your
+**Jetder email** and **API token** — the token is masked and stored securely (macOS
+Keychain / Windows Credential Manager); no JSON editing. Get access at
+<https://thunder.in.th/>.
 
 **Manual (any OS):** edit `claude_desktop_config.json` (macOS:
 `~/Library/Application Support/Claude/`, Windows: `%APPDATA%\Claude\`):

@@ -21,6 +21,10 @@ jobs:
       matrix:
         os: [linux, darwin]
         arch: [amd64, arm64]
+        include:
+          # Windows: amd64 only (arm64 Windows is rare — a follow-up).
+          - os: windows
+            arch: amd64
     steps:
       - uses: actions/checkout@v4
 
@@ -40,46 +44,63 @@ jobs:
           # Stamp the release tag into the server version so serverInfo.version
           # always matches the published tag (no drift from the source default).
           VERSION="${GITHUB_REF_NAME}"
+          # Windows binaries carry a .exe suffix.
+          EXT=""
+          if [ "${GOOS}" = "windows" ]; then EXT=".exe"; fi
           # main server binary
           go build -trimpath -ldflags="-s -w -X main.serverVersion=${VERSION}" \
-            -o "dist/jetder-mcp_${GOOS}_${GOARCH}" .
+            -o "dist/jetder-mcp_${GOOS}_${GOARCH}${EXT}" .
           # CI deploy helper
           go build -trimpath -ldflags="-s -w" \
-            -o "dist/mcp-deploy_${GOOS}_${GOARCH}" ./scripts/mcp-deploy
+            -o "dist/mcp-deploy_${GOOS}_${GOARCH}${EXT}" ./scripts/mcp-deploy
 
-      # Build a Claude Desktop .mcpb bundle for macOS only (the manifest declares
-      # compatibility.platforms = ["darwin"]). A .mcpb is a zip of manifest.json +
-      # server/<binary>; the version is injected from the tag. No secret is bundled —
-      # the env uses ${user_config.*} placeholders the user fills in Claude Desktop.
-      - name: Build .mcpb bundle (macOS)
-        if: matrix.os == 'darwin'
+      # Build a Claude Desktop .mcpb bundle for macOS and Windows (Claude Desktop
+      # runs on both). A .mcpb is a zip of manifest.json + server/<binary>. The
+      # manifest is rendered from mcpb/manifest.template.json per-OS: __VERSION__
+      # (from the tag), __BINARY__ (jetder-mcp[.exe]), and __PLATFORM__ (darwin|win32)
+      # are substituted. No secret is bundled — the env uses ${user_config.*}
+      # placeholders the user fills in Claude Desktop.
+      - name: Build .mcpb bundle (macOS + Windows)
+        if: matrix.os == 'darwin' || matrix.os == 'windows'
         env:
           GOOS: ${{ matrix.os }}
           GOARCH: ${{ matrix.arch }}
         run: |
           set -eu
           VERSION="${GITHUB_REF_NAME#v}"   # strip leading v for the manifest version
+          if [ "${GOOS}" = "windows" ]; then
+            EXT=".exe"; PLATFORM="win32"
+          else
+            EXT=""; PLATFORM="darwin"
+          fi
+          BINARY="jetder-mcp${EXT}"
           work="$(mktemp -d)"
           mkdir -p "${work}/server"
-          cp "dist/jetder-mcp_${GOOS}_${GOARCH}" "${work}/server/jetder-mcp"
-          chmod +x "${work}/server/jetder-mcp"
-          # Inject the release version into the manifest, then validate it.
-          python3 - "$VERSION" "mcpb/manifest.json" "${work}/manifest.json" <<'PY'
+          cp "dist/jetder-mcp_${GOOS}_${GOARCH}${EXT}" "${work}/server/${BINARY}"
+          chmod +x "${work}/server/${BINARY}" || true
+          # Render the manifest template (version/binary/platform) and validate it.
+          python3 - "$VERSION" "$BINARY" "$PLATFORM" "mcpb/manifest.template.json" "${work}/manifest.json" <<'PY'
           import json, sys
-          version, src, dst = sys.argv[1], sys.argv[2], sys.argv[3]
-          m = json.load(open(src))
-          m["version"] = version
+          version, binary, platform, src, dst = sys.argv[1:6]
+          raw = open(src).read()
+          raw = raw.replace("__VERSION__", version).replace("__BINARY__", binary).replace("__PLATFORM__", platform)
+          m = json.loads(raw)  # must be valid JSON after substitution
           for k in ("manifest_version", "name", "version", "description", "author", "server"):
               assert k in m, f"manifest missing required field: {k}"
           assert m["manifest_version"] == "0.4", m["manifest_version"]
           assert m["server"]["type"] == "binary"
+          assert m["server"]["entry_point"] == f"server/{binary}", m["server"]["entry_point"]
+          assert m["server"]["mcp_config"]["command"].endswith(f"server/{binary}"), m["server"]["mcp_config"]["command"]
+          assert m["compatibility"]["platforms"] == [platform], m["compatibility"]["platforms"]
+          assert "${user_config.jetder_token}" in json.dumps(m)  # token is a placeholder, not a value
           json.dump(m, open(dst, "w"), indent=2)
           PY
           ( cd "$work" && zip -r -q "bundle.mcpb" manifest.json server/ )
           cp "${work}/bundle.mcpb" "dist/jetder-mcp_${GOOS}_${GOARCH}.mcpb"
-          # Sanity: the bundle must contain manifest.json + server/jetder-mcp and no real token.
+          # Sanity: the bundle must contain manifest.json + server/<binary> and no real token.
           unzip -l "dist/jetder-mcp_${GOOS}_${GOARCH}.mcpb"
           unzip -p "dist/jetder-mcp_${GOOS}_${GOARCH}.mcpb" manifest.json | grep -q '${user_config.jetder_token}'
+          unzip -l "dist/jetder-mcp_${GOOS}_${GOARCH}.mcpb" | grep -q "server/${BINARY}"
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
