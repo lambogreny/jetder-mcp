@@ -34,6 +34,14 @@ func run() error {
 		return err
 	}
 
+	server := buildServer(adapter)
+
+	// Serve over stdin/stdout until the client disconnects.
+	return server.Run(context.Background(), &mcp.StdioTransport{})
+}
+
+// buildServer constructs the MCP server with all tools registered.
+func buildServer(adapter *jetder.Adapter) *mcp.Server {
 	server := mcp.NewServer(
 		&mcp.Implementation{Name: serverName, Version: serverVersion},
 		&mcp.ServerOptions{
@@ -49,9 +57,9 @@ func run() error {
 
 	registerMeGet(server, adapter)
 	registerReadTools(server, adapter)
+	registerDeploymentReadTools(server, adapter)
 
-	// Serve over stdin/stdout until the client disconnects.
-	return server.Run(context.Background(), &mcp.StdioTransport{})
+	return server
 }
 
 // MeGetInput is the (empty) input for the me-get tool.
@@ -77,5 +85,6 @@ func registerMeGet(server *mcp.Server, adapter *jetder.Adapter) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "me-get",
 		Description: "Get the authenticated Jetder user's profile (email, KYC status).",
+		Annotations: readOnly(),
 	}, handler)
 }

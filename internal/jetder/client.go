@@ -25,13 +25,44 @@ const EnvToken = "JETDER_TOKEN"
 // EnvEndpoint optionally overrides the Jetder API endpoint (mainly for testing).
 const EnvEndpoint = "JETDER_ENDPOINT"
 
+// Default-context env vars. When a tool's project/location arg is empty, these
+// supply a fallback. Per-tool args remain the source of truth and always win.
+const (
+	EnvDefaultProject  = "JETDER_DEFAULT_PROJECT"
+	EnvDefaultLocation = "JETDER_DEFAULT_LOCATION"
+)
+
 // ErrNoToken is returned when JETDER_TOKEN is not set.
 var ErrNoToken = errors.New("JETDER_TOKEN environment variable is required")
 
 // Adapter wraps a configured Jetder API client.
 type Adapter struct {
-	client *client.Client
-	token  string
+	client          *client.Client
+	token           string
+	defaultProject  string
+	defaultLocation string
+}
+
+// DefaultProject returns the configured fallback project (may be empty).
+func (a *Adapter) DefaultProject() string { return a.defaultProject }
+
+// DefaultLocation returns the configured fallback location (may be empty).
+func (a *Adapter) DefaultLocation() string { return a.defaultLocation }
+
+// ResolveProject returns arg if non-empty (trimmed), else the env default.
+func (a *Adapter) ResolveProject(arg string) string {
+	if v := strings.TrimSpace(arg); v != "" {
+		return v
+	}
+	return a.defaultProject
+}
+
+// ResolveLocation returns arg if non-empty (trimmed), else the env default.
+func (a *Adapter) ResolveLocation(arg string) string {
+	if v := strings.TrimSpace(arg); v != "" {
+		return v
+	}
+	return a.defaultLocation
 }
 
 // New builds an Adapter from environment configuration.
@@ -55,7 +86,12 @@ func New() (*Adapter, error) {
 		},
 	}
 
-	return &Adapter{client: c, token: token}, nil
+	return &Adapter{
+		client:          c,
+		token:           token,
+		defaultProject:  strings.TrimSpace(os.Getenv(EnvDefaultProject)),
+		defaultLocation: strings.TrimSpace(os.Getenv(EnvDefaultLocation)),
+	}, nil
 }
 
 // Client returns the underlying api client. Callers use its resource accessors

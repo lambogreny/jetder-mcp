@@ -11,6 +11,15 @@ import (
 	"github.com/lambogreny/jetder-mcp/internal/jetder"
 )
 
+// ResolvedContext echoes the effective project/location a tool used after
+// applying env defaults (JETDER_DEFAULT_PROJECT / JETDER_DEFAULT_LOCATION).
+// Embedded in the output of any tool that resolves these, so defaults are never
+// hidden state — the caller always sees what was actually used.
+type ResolvedContext struct {
+	ResolvedProject  string `json:"resolvedProject,omitempty" jsonschema:"project actually used after applying defaults"`
+	ResolvedLocation string `json:"resolvedLocation,omitempty" jsonschema:"location actually used after applying defaults"`
+}
+
 // registerReadTools registers the read-only tools for Location and Project.
 // (Me.Get is registered separately as me-get.)
 func registerReadTools(server *mcp.Server, adapter *jetder.Adapter) {
@@ -53,24 +62,30 @@ type LocationListInput struct {
 }
 
 type LocationListOutput struct {
+	ResolvedContext
 	Items []LocationItem `json:"items" jsonschema:"available locations"`
 }
 
 func registerLocationList(server *mcp.Server, adapter *jetder.Adapter) {
 	handler := func(ctx context.Context, _ *mcp.CallToolRequest, in LocationListInput) (*mcp.CallToolResult, LocationListOutput, error) {
-		res, err := adapter.Client().Location().List(ctx, &api.LocationList{Project: in.Project})
+		project := adapter.ResolveProject(in.Project)
+		res, err := adapter.Client().Location().List(ctx, &api.LocationList{Project: project})
 		if err != nil {
 			return nil, LocationListOutput{}, adapter.Redact(err)
 		}
-		out := LocationListOutput{Items: make([]LocationItem, 0, len(res.Items))}
+		out := LocationListOutput{
+			ResolvedContext: ResolvedContext{ResolvedProject: project},
+			Items:           make([]LocationItem, 0, len(res.Items)),
+		}
 		for _, x := range res.Items {
 			out.Items = append(out.Items, toLocationItem(x))
 		}
-		return textResult(fmt.Sprintf("%d location(s)", len(out.Items))), out, nil
+		return textResult(fmt.Sprintf("%d location(s) [project=%s]", len(out.Items), project)), out, nil
 	}
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "location-list",
 		Description: "List available Jetder locations (optionally scoped to a project).",
+		Annotations: readOnly(),
 	}, handler)
 }
 
@@ -90,6 +105,7 @@ func registerLocationGet(server *mcp.Server, adapter *jetder.Adapter) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "location-get",
 		Description: "Get a single Jetder location by id.",
+		Annotations: readOnly(),
 	}, handler)
 }
 
@@ -133,33 +149,46 @@ func registerProjectList(server *mcp.Server, adapter *jetder.Adapter) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "project-list",
 		Description: "List Jetder projects accessible to the authenticated user.",
+		Annotations: readOnly(),
 	}, handler)
 }
 
 type ProjectGetInput struct {
-	Project string `json:"project" jsonschema:"project sid"`
+	Project string `json:"project,omitempty" jsonschema:"project sid (falls back to JETDER_DEFAULT_PROJECT)"`
+}
+
+// ProjectGetOutput wraps the project with the resolved context.
+type ProjectGetOutput struct {
+	ResolvedContext
+	ProjectItem
 }
 
 func registerProjectGet(server *mcp.Server, adapter *jetder.Adapter) {
-	handler := func(ctx context.Context, _ *mcp.CallToolRequest, in ProjectGetInput) (*mcp.CallToolResult, ProjectItem, error) {
-		if strings.TrimSpace(in.Project) == "" {
-			return nil, ProjectItem{}, fmt.Errorf("project required")
+	handler := func(ctx context.Context, _ *mcp.CallToolRequest, in ProjectGetInput) (*mcp.CallToolResult, ProjectGetOutput, error) {
+		project := adapter.ResolveProject(in.Project)
+		if project == "" {
+			return nil, ProjectGetOutput{}, fmt.Errorf("project required")
 		}
-		res, err := adapter.Client().Project().Get(ctx, &api.ProjectGet{Project: in.Project})
+		res, err := adapter.Client().Project().Get(ctx, &api.ProjectGet{Project: project})
 		if err != nil {
-			return nil, ProjectItem{}, adapter.Redact(err)
+			return nil, ProjectGetOutput{}, adapter.Redact(err)
 		}
-		out := toProjectItem(res)
+		out := ProjectGetOutput{
+			ResolvedContext: ResolvedContext{ResolvedProject: project},
+			ProjectItem:     toProjectItem(res),
+		}
 		return textResult(fmt.Sprintf("project %s (%s)", out.Project, out.Name)), out, nil
 	}
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "project-get",
 		Description: "Get a single Jetder project by sid.",
+		Annotations: readOnly(),
 	}, handler)
 }
 
 // ProjectUsageOutput mirrors api.ProjectUsageResult (current resource usage).
 type ProjectUsageOutput struct {
+	ResolvedContext
 	CPUUsage float64 `json:"cpuUsage" jsonschema:"current cpu usage"`
 	CPU      float64 `json:"cpu" jsonschema:"allocated cpu"`
 	Memory   float64 `json:"memory" jsonschema:"memory usage"`
@@ -170,26 +199,29 @@ type ProjectUsageOutput struct {
 
 func registerProjectUsage(server *mcp.Server, adapter *jetder.Adapter) {
 	handler := func(ctx context.Context, _ *mcp.CallToolRequest, in ProjectGetInput) (*mcp.CallToolResult, ProjectUsageOutput, error) {
-		if strings.TrimSpace(in.Project) == "" {
+		project := adapter.ResolveProject(in.Project)
+		if project == "" {
 			return nil, ProjectUsageOutput{}, fmt.Errorf("project required")
 		}
-		res, err := adapter.Client().Project().Usage(ctx, &api.ProjectUsage{Project: in.Project})
+		res, err := adapter.Client().Project().Usage(ctx, &api.ProjectUsage{Project: project})
 		if err != nil {
 			return nil, ProjectUsageOutput{}, adapter.Redact(err)
 		}
 		out := ProjectUsageOutput{
-			CPUUsage: res.CPUUsage,
-			CPU:      res.CPU,
-			Memory:   res.Memory,
-			Egress:   res.Egress,
-			Disk:     res.Disk,
-			Replica:  res.Replica,
+			ResolvedContext: ResolvedContext{ResolvedProject: project},
+			CPUUsage:        res.CPUUsage,
+			CPU:             res.CPU,
+			Memory:          res.Memory,
+			Egress:          res.Egress,
+			Disk:            res.Disk,
+			Replica:         res.Replica,
 		}
-		return textResult(fmt.Sprintf("usage for %s: cpu=%.2f mem=%.2f disk=%.2f", in.Project, out.CPU, out.Memory, out.Disk)), out, nil
+		return textResult(fmt.Sprintf("usage for %s: cpu=%.2f mem=%.2f disk=%.2f", project, out.CPU, out.Memory, out.Disk)), out, nil
 	}
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "project-usage",
 		Description: "Get current resource usage for a Jetder project.",
+		Annotations: readOnly(),
 	}, handler)
 }
 
@@ -198,4 +230,9 @@ func textResult(s string) *mcp.CallToolResult {
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{&mcp.TextContent{Text: s}},
 	}
+}
+
+// readOnly returns annotations marking a tool as non-mutating.
+func readOnly() *mcp.ToolAnnotations {
+	return &mcp.ToolAnnotations{ReadOnlyHint: true}
 }

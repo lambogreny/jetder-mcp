@@ -94,6 +94,29 @@ func TestRedact_NoTokenInMessage(t *testing.T) {
 	}
 }
 
+func TestResolveProjectLocation(t *testing.T) {
+	a := &Adapter{defaultProject: "dp", defaultLocation: "dl"}
+
+	if got := a.ResolveProject("explicit"); got != "explicit" {
+		t.Fatalf("ResolveProject(explicit) = %q, want explicit", got)
+	}
+	if got := a.ResolveProject("  spaced  "); got != "spaced" {
+		t.Fatalf("ResolveProject trims = %q, want spaced", got)
+	}
+	if got := a.ResolveProject(""); got != "dp" {
+		t.Fatalf("ResolveProject(empty) = %q, want default dp", got)
+	}
+	if got := a.ResolveProject("   "); got != "dp" {
+		t.Fatalf("ResolveProject(whitespace) = %q, want default dp", got)
+	}
+	if got := a.ResolveLocation(""); got != "dl" {
+		t.Fatalf("ResolveLocation(empty) = %q, want default dl", got)
+	}
+	if got := a.ResolveLocation("here"); got != "here" {
+		t.Fatalf("ResolveLocation(here) = %q, want here", got)
+	}
+}
+
 func contains(s, sub string) bool {
 	for i := 0; i+len(sub) <= len(s); i++ {
 		if s[i:i+len(sub)] == sub {
