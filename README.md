@@ -22,38 +22,102 @@ curl -fsSL https://raw.githubusercontent.com/lambogreny/jetder-mcp/main/install.
 >
 > Or build from source: `go build -o jetder-mcp .` (Go 1.23+).
 
-**3. Add it to your MCP client.** Point the client at the installed binary and
-supply your token via `env`:
+**3. Add it to your MCP client.** The fastest path — **Claude Code**, one command:
 
-- **Claude Desktop** (`claude_desktop_config.json`), **Cursor** (`.cursor/mcp.json`),
-  **Claude Code** (`.mcp.json`) — all use the `mcpServers` shape:
+```sh
+claude mcp add -e JETDER_AUTH_USER=<svc>@<project>.serviceaccount.jetder.com \
+  -e JETDER_TOKEN=<your-jetder-api-token> --scope user jetder-mcp -- jetder-mcp
+```
 
-  ```json
-  {
-    "mcpServers": {
-      "jetder": {
-        "command": "jetder-mcp",
-        "env": {
-          "JETDER_AUTH_USER": "<svc>@<project>.serviceaccount.jetder.com",
-          "JETDER_TOKEN": "<your-jetder-api-token>"
-        }
-      }
-    }
-  }
-  ```
-
-- **VS Code** (`.vscode/mcp.json`) uses a `servers` key instead of `mcpServers`;
-  the `command`/`env` block is identical.
-
-Use the absolute path (e.g. `~/.local/bin/jetder-mcp`) for `command` if the bin
-dir is not on your client's `PATH`. Optional env for domain tools and defaults:
-`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `JETDER_DEFAULT_PROJECT`,
-`JETDER_DEFAULT_LOCATION`. The full list of every variable the server reads is in
-**[docs/CREDENTIALS.md](./docs/CREDENTIALS.md)**.
+For Claude Desktop, Cursor, and VS Code, see
+[Add to your MCP client](#add-to-your-mcp-client) below. (Optional env for domain
+tools and defaults — `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`,
+`JETDER_DEFAULT_PROJECT`, `JETDER_DEFAULT_LOCATION` — and the full variable list
+are in **[docs/CREDENTIALS.md](./docs/CREDENTIALS.md)**.)
 
 **4. Verify.** Ask the agent to run the **`check-setup`** tool — it reports
 whether your auth, project/location, Cloudflare config, and pull-secret are ready
 to deploy, with a remediation (and the owner contact) for anything missing.
+
+## Add to your MCP client
+
+There's no universal one-click installer — each client has its own config. Use the
+absolute path (e.g. `~/.local/bin/jetder-mcp`) for `command` if the install dir is
+not on the client's `PATH`. Replace the `<...>` placeholders with your real values
+([get them from the owner](#getting-access)).
+
+### Claude Code (CLI)
+
+One command (the `--` is required, and keep a flag like `--scope` between the last
+`-e` and the server name):
+
+```sh
+claude mcp add -e JETDER_AUTH_USER=<svc>@<project>.serviceaccount.jetder.com \
+  -e JETDER_TOKEN=<your-jetder-api-token> --scope user jetder-mcp -- jetder-mcp
+```
+
+`--scope` is `local` (default), `user`, or `project`. Verify with
+`claude mcp get jetder-mcp`.
+
+### Claude Desktop
+
+Edit `claude_desktop_config.json` (macOS:
+`~/Library/Application Support/Claude/`, Windows: `%APPDATA%\Claude\`):
+
+```json
+{
+  "mcpServers": {
+    "jetder": {
+      "command": "jetder-mcp",
+      "env": {
+        "JETDER_AUTH_USER": "<svc>@<project>.serviceaccount.jetder.com",
+        "JETDER_TOKEN": "<your-jetder-api-token>"
+      }
+    }
+  }
+}
+```
+
+Then restart Claude Desktop. (A one-click `.mcpb` bundle is planned — see the repo
+for status.)
+
+### Cursor
+
+Edit `~/.cursor/mcp.json` (global) or `<project>/.cursor/mcp.json` — same
+`mcpServers` shape as Claude Desktop above. Cursor also supports a one-click
+deeplink; a published "Add to Cursor" badge uses **placeholder** env you edit after
+installing (never publish a real token).
+
+### VS Code (Copilot agent mode)
+
+Edit `.vscode/mcp.json` in your workspace — VS Code uses a top-level **`servers`**
+key (not `mcpServers`) and an `inputs` block so secrets are prompted, not stored in
+the file:
+
+```json
+{
+  "inputs": [
+    { "type": "promptString", "id": "jetder-user", "description": "JETDER_AUTH_USER" },
+    { "type": "promptString", "id": "jetder-token", "description": "JETDER_TOKEN", "password": true }
+  ],
+  "servers": {
+    "jetder-mcp": {
+      "type": "stdio",
+      "command": "jetder-mcp",
+      "env": {
+        "JETDER_AUTH_USER": "${input:jetder-user}",
+        "JETDER_TOKEN": "${input:jetder-token}"
+      }
+    }
+  }
+}
+```
+
+Or add it from the command line:
+
+```sh
+code --add-mcp '{"name":"jetder-mcp","command":"jetder-mcp","env":{"JETDER_AUTH_USER":"<svc>@<project>.serviceaccount.jetder.com","JETDER_TOKEN":"<your-jetder-api-token>"}}'
+```
 
 ## Getting access
 
