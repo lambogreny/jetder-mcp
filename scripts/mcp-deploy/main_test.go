@@ -180,6 +180,45 @@ func TestDeploy_WhitespaceFlagsTrimmed(t *testing.T) {
 	}
 }
 
+// TestDeploy_PullSecretPassThrough: -pull-secret flows to the server and the
+// helper verifies the echoed name. (Server synthesizes the echo from the arg.)
+func TestDeploy_PullSecretPassThrough(t *testing.T) {
+	server, helper := buildBinaries(t)
+	fake := fakeJetder(t, `{"ok":true,"result":{}}`)
+
+	cmd := exec.Command(helper,
+		"-server", server, "-project", "p1", "-location", "l1", "-name", "web",
+		"-image", "ghcr.io/lambogreny/app:sha", "-pull-secret", "ghcr-cred")
+	cmd.Env = append(os.Environ(),
+		"JETDER_AUTH_USER=ci@test.example", "JETDER_TOKEN=tok", "JETDER_ENDPOINT="+fake.URL,
+		"JETDER_DEFAULT_PROJECT=", "JETDER_DEFAULT_LOCATION=")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("-pull-secret deploy should succeed, err=%v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "deploy accepted") {
+		t.Fatalf("expected success, got:\n%s", out)
+	}
+}
+
+// TestDeploy_InvalidPullSecretRejected: a credential pasted into -pull-secret must
+// be rejected at flag-parse time, before the server is even launched.
+func TestDeploy_InvalidPullSecretRejected(t *testing.T) {
+	_, helper := buildBinaries(t)
+	cmd := exec.Command(helper,
+		"-server", "/nonexistent-should-not-run", // would fail if we got that far
+		"-project", "p1", "-location", "l1", "-name", "web", "-image", "img:1",
+		"-pull-secret", "ghp_AbC123def456GHI789jkl012") // PAT-lookalike
+	cmd.Env = append(os.Environ(), "JETDER_AUTH_USER=ci@test.example", "JETDER_TOKEN=tok")
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected rejection of invalid -pull-secret; output:\n%s", out)
+	}
+	if !strings.Contains(string(out), "invalid -pull-secret") {
+		t.Fatalf("expected invalid-pull-secret message, got:\n%s", out)
+	}
+}
+
 func TestDeploy_MissingRequiredFlag(t *testing.T) {
 	server, helper := buildBinaries(t)
 	cmd := exec.Command(helper, "-server", server, "-project", "p1") // missing location/name/image

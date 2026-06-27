@@ -26,6 +26,69 @@ func TestDeploymentDeploy_EndToEnd(t *testing.T) {
 	}
 }
 
+func TestDeploymentDeploy_PullSecretEchoed(t *testing.T) {
+	a := newTestAdapter(t, `{"ok":true,"result":{}}`, "def-proj", "def-loc")
+	cs := connectInMemory(t, a)
+
+	sc := callTool(t, cs, "deployment-deploy", map[string]any{
+		"name": "web", "image": "ghcr.io/lambogreny/app:sha", "pullSecret": "ghcr-cred",
+	})
+	if sc["pullSecret"] != "ghcr-cred" {
+		t.Fatalf("expected pullSecret echoed, got %+v", sc)
+	}
+}
+
+func TestDeploymentDeploy_NoPullSecretByDefault(t *testing.T) {
+	a := newTestAdapter(t, `{"ok":true,"result":{}}`, "p", "l")
+	cs := connectInMemory(t, a)
+	sc := callTool(t, cs, "deployment-deploy", map[string]any{"name": "web", "image": "img:1"})
+	// pullSecret omitempty → absent (or empty) when not requested.
+	if v, present := sc["pullSecret"]; present && v != "" {
+		t.Fatalf("pullSecret should be absent/empty by default, got %v", v)
+	}
+}
+
+// TestValidatePullSecretName: unit truth table — names accepted, credentials/junk
+// rejected (the regex+len guard that runs BEFORE any deploy).
+func TestValidatePullSecretName(t *testing.T) {
+	good := []string{"ghcr-pull", "abc", "a-b-c", "pull123"}
+	for _, v := range good {
+		if got, err := validatePullSecretName(v); err != nil || got != v {
+			t.Fatalf("valid %q rejected: %v", v, err)
+		}
+	}
+	if got, _ := validatePullSecretName("  ghcr-pull  "); got != "ghcr-pull" {
+		t.Fatalf("trim failed: %q", got)
+	}
+	if got, err := validatePullSecretName(""); err != nil || got != "" {
+		t.Fatalf("empty should omit: %q %v", got, err)
+	}
+	bad := []string{
+		"ghp_AbC123def456GHI789jkl012", // PAT-lookalike (uppercase + len>25)
+		"https://ghcr.io/x",            // URL
+		"user:token",                   // colon
+		"has space",                    // space
+		"ab",                           // too short
+		"UPPER",                        // uppercase
+		"toolongtoolongtoolongtoolong", // >25
+		"-leading",                     // leading dash
+		"trailing-",                    // trailing dash
+	}
+	for _, v := range bad {
+		if _, err := validatePullSecretName(v); err == nil {
+			t.Fatalf("invalid %q should be rejected (credential/URL/junk)", v)
+		}
+	}
+}
+
+// TestDeploymentDeploy_PullSecretRejectsCredential: a misplaced credential in the
+// pullSecret arg must be rejected before any deploy POST.
+func TestDeploymentDeploy_PullSecretRejectsCredential(t *testing.T) {
+	callToolExpectError(t, "deployment-deploy", map[string]any{
+		"name": "web", "image": "img:1", "pullSecret": "ghp_AbC123def456GHI789jkl012",
+	})
+}
+
 func TestDeploymentPause_EndToEnd(t *testing.T) {
 	a := newTestAdapter(t, `{"ok":true,"result":{}}`, "p", "l")
 	cs := connectInMemory(t, a)

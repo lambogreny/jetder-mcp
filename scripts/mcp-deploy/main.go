@@ -39,11 +39,16 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+// rePullSecretName matches a valid jetder pull-secret NAME (same as the server's
+// constraint). The helper accepts a NAME only — never a credential.
+var rePullSecretName = regexp.MustCompile(`^[a-z][a-z0-9-]*[a-z0-9]$`)
 
 func main() {
 	if err := run(); err != nil {
@@ -55,14 +60,15 @@ func main() {
 }
 
 type config struct {
-	server    string // path to a prebuilt server binary (compat)
-	serverCmd string // full command to launch the server, e.g. "go run <module>@<ver>"
-	project   string
-	location  string
-	name      string
-	image     string
-	branch    string
-	timeout   time.Duration
+	server     string // path to a prebuilt server binary (compat)
+	serverCmd  string // full command to launch the server, e.g. "go run <module>@<ver>"
+	project    string
+	location   string
+	name       string
+	image      string
+	branch     string
+	pullSecret string // NAME of an existing pull secret (never a credential)
+	timeout    time.Duration
 	// Basic-auth credentials, for sanitization only (never printed). authUser =
 	// JETDER_AUTH_USER, token = JETDER_TOKEN/JETDER_AUTH_PASS, basicB64 =
 	// base64(user:token) (the raw Basic header value).
@@ -110,6 +116,7 @@ func parseFlags() (config, error) {
 	flag.StringVar(&c.name, "name", "", "deployment name (required)")
 	flag.StringVar(&c.image, "image", "", "container image to deploy, e.g. ghcr.io/owner/app:sha (required)")
 	flag.StringVar(&c.branch, "branch", "", "branch (optional)")
+	flag.StringVar(&c.pullSecret, "pull-secret", "", "NAME of an existing pull secret for private images (a name only — NOT a credential)")
 	flag.DurationVar(&c.timeout, "timeout", 60*time.Second, "overall timeout")
 	flag.Parse()
 
@@ -120,6 +127,14 @@ func parseFlags() (config, error) {
 	c.name = strings.TrimSpace(c.name)
 	c.image = strings.TrimSpace(c.image)
 	c.branch = strings.TrimSpace(c.branch)
+	// pullSecret is a NAME only — validate up front so a misplaced credential
+	// (PAT/URL/token) is rejected BEFORE we launch the server or send anything.
+	c.pullSecret = strings.TrimSpace(c.pullSecret)
+	if c.pullSecret != "" {
+		if n := len(c.pullSecret); n < 3 || n > 25 || !rePullSecretName.MatchString(c.pullSecret) {
+			return c, fmt.Errorf("invalid -pull-secret: must be a pull-secret NAME (lowercase, 3-25 chars), not a credential")
+		}
+	}
 
 	var missing []string
 	for k, v := range map[string]string{"project": c.project, "location": c.location, "name": c.name, "image": c.image} {
@@ -191,6 +206,7 @@ type deployResult struct {
 	Name             string `json:"name"`
 	Action           string `json:"action"`
 	Success          bool   `json:"success"`
+	PullSecret       string `json:"pullSecret"`
 }
 
 func callDeploy(ctx context.Context, session *mcp.ClientSession, c config) (*deployResult, error) {
@@ -202,6 +218,9 @@ func callDeploy(ctx context.Context, session *mcp.ClientSession, c config) (*dep
 	}
 	if c.branch != "" {
 		args["branch"] = c.branch
+	}
+	if c.pullSecret != "" {
+		args["pullSecret"] = c.pullSecret
 	}
 
 	res, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "deployment-deploy", Arguments: args})
@@ -239,6 +258,10 @@ func verify(out *deployResult, c config) error {
 	}
 	if out.Name != c.name {
 		return fmt.Errorf("deployed name %q != requested %q", out.Name, c.name)
+	}
+	// if a pull secret was requested, confirm the server echoed the same name.
+	if c.pullSecret != "" && out.PullSecret != c.pullSecret {
+		return fmt.Errorf("pull secret %q not applied (server echoed %q)", c.pullSecret, out.PullSecret)
 	}
 	return nil
 }

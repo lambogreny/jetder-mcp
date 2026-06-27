@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/jetder-core/api"
@@ -10,6 +11,28 @@ import (
 
 	"github.com/lambogreny/jetder-mcp/internal/jetder"
 )
+
+// rePullSecretName matches a valid jetder pull-secret NAME (same shape as the
+// upstream api.PullSecretCreate name: lowercase, 3..25 chars). Validating this
+// BEFORE any deploy ensures a misplaced credential (e.g. a GHCR PAT pasted into
+// the pull-secret arg) is rejected up front and never sent/echoed/surfaced.
+var rePullSecretName = regexp.MustCompile(`^[a-z][a-z0-9-]*[a-z0-9]$`)
+
+// validatePullSecretName trims and validates a pull-secret name. Empty → ("",nil)
+// (omit). Invalid (incl. anything that looks like a credential) → error.
+func validatePullSecretName(v string) (string, error) {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return "", nil
+	}
+	if n := len(v); n < 3 || n > 25 {
+		return "", fmt.Errorf("invalid pullSecret: must be a pull-secret NAME (3-25 chars), not a credential")
+	}
+	if !rePullSecretName.MatchString(v) {
+		return "", fmt.Errorf("invalid pullSecret: must be a pull-secret NAME matching %s (a name, never a token/URL)", rePullSecretName.String())
+	}
+	return v, nil
+}
 
 // registerDeploymentActionTools registers the state-changing deployment tools:
 // deploy, pause, resume, rollback. (delete is intentionally NOT exposed.)
@@ -27,10 +50,11 @@ func registerDeploymentActionTools(server *mcp.Server, adapter *jetder.Adapter) 
 // plus a short human-readable summary of what was performed.
 type ActionResult struct {
 	ResolvedContext
-	Name    string `json:"name" jsonschema:"deployment name acted upon"`
-	Action  string `json:"action" jsonschema:"the action performed"`
-	Success bool   `json:"success" jsonschema:"whether the action was accepted"`
-	Detail  string `json:"detail,omitempty" jsonschema:"extra detail (e.g. target revision)"`
+	Name       string `json:"name" jsonschema:"deployment name acted upon"`
+	Action     string `json:"action" jsonschema:"the action performed"`
+	Success    bool   `json:"success" jsonschema:"whether the action was accepted"`
+	Detail     string `json:"detail,omitempty" jsonschema:"extra detail (e.g. target revision)"`
+	PullSecret string `json:"pullSecret,omitempty" jsonschema:"the pull secret name applied (deploy only), echoed for verification"`
 }
 
 func actionResult(project, location, name, action, detail string) (*mcp.CallToolResult, ActionResult, error) {
@@ -76,6 +100,9 @@ type DeploymentDeployInput struct {
 	Image       string `json:"image" jsonschema:"container image to deploy"`
 	MinReplicas *int   `json:"minReplicas,omitempty" jsonschema:"minimum replicas"`
 	MaxReplicas *int   `json:"maxReplicas,omitempty" jsonschema:"maximum replicas"`
+	// PullSecret is the NAME of an existing pull secret (created out-of-band) used
+	// to pull a private image. Only the name is accepted here — never credentials.
+	PullSecret string `json:"pullSecret,omitempty" jsonschema:"name of an existing pull secret for private images (credentials are NOT accepted here)"`
 }
 
 func registerDeploymentDeploy(server *mcp.Server, adapter *jetder.Adapter) {
@@ -87,7 +114,7 @@ func registerDeploymentDeploy(server *mcp.Server, adapter *jetder.Adapter) {
 		if strings.TrimSpace(in.Image) == "" {
 			return nil, ActionResult{}, fmt.Errorf("image required")
 		}
-		_, err = adapter.Client().Deployment().Deploy(ctx, &api.DeploymentDeploy{
+		m := &api.DeploymentDeploy{
 			Project:     project,
 			Location:    location,
 			Name:        name,
@@ -95,11 +122,23 @@ func registerDeploymentDeploy(server *mcp.Server, adapter *jetder.Adapter) {
 			Image:       strings.TrimSpace(in.Image),
 			MinReplicas: in.MinReplicas,
 			MaxReplicas: in.MaxReplicas,
-		})
+		}
+		// pullSecret: NAME only (never credentials); validate BEFORE the deploy so a
+		// misplaced token/URL is rejected up front (no POST, nothing echoed). Omit
+		// when empty so the API keeps the deployment's existing value.
+		pullSecret, err := validatePullSecretName(in.PullSecret)
 		if err != nil {
+			return nil, ActionResult{}, err
+		}
+		if pullSecret != "" {
+			m.PullSecret = &pullSecret
+		}
+		if _, err = adapter.Client().Deployment().Deploy(ctx, m); err != nil {
 			return nil, ActionResult{}, adapter.Redact(err)
 		}
-		return actionResult(project, location, name, "deploy", "image="+strings.TrimSpace(in.Image))
+		res, out, err := actionResult(project, location, name, "deploy", "image="+strings.TrimSpace(in.Image))
+		out.PullSecret = pullSecret // echo for verification (empty if not set)
+		return res, out, err
 	}
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "deployment-deploy",
