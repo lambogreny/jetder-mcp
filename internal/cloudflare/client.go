@@ -312,11 +312,13 @@ type CreateDNSResult struct {
 	AlreadyExists bool // a record with the same type+name+content already existed
 }
 
-// CreateDNSRecord idempotently creates a record. It lists existing records by
-// type+name first:
-//   - same type+name+content already present → AlreadyExists=true, no write.
-//   - same type+name but DIFFERENT content → conflict error (NEVER overwrites).
-//   - otherwise → POST a new record.
+// CreateDNSRecord idempotently creates a record. It preflights by listing ALL
+// records at the same name (every type, paginated) and applies Cloudflare's
+// same-name conflict rules:
+//   - identical (same type+content) already present → AlreadyExists=true, no write.
+//   - same type, different content → conflict (NEVER overwrites).
+//   - CNAME vs any other type, or NS vs non-NS → conflict.
+//   - different non-special types (e.g. A + TXT) → coexist, POST a new record.
 //
 // ttl defaults to 1 (auto) and proxied defaults to false (appropriate for Jetder
 // verification + pointing) unless the caller overrides.
