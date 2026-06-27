@@ -142,6 +142,62 @@ func TestPrompt_DomainLowercased(t *testing.T) {
 	}
 }
 
+func TestPrompt_DnsHostOther_Manual(t *testing.T) {
+	cs := connectWithCF(t, cfOK(`{"success":true,"result":[]}`))
+	gp, err := cs.GetPrompt(context.Background(), &mcp.GetPromptParams{
+		Name:      "point-a-domain",
+		Arguments: map[string]string{"domain": "example.com", "deployment": "web", "dnsHost": "other"},
+	})
+	if err != nil {
+		t.Fatalf("GetPrompt: %v", err)
+	}
+	text := gp.Messages[0].Content.(*mcp.TextContent).Text
+	if strings.Contains(text, "cf-dns-create") {
+		t.Fatalf("dnsHost=other must NOT instruct cf-dns-create:\n%s", text)
+	}
+	for _, want := range []string{"YOUR OWN DNS PROVIDER", "Do NOT use the Cloudflare DNS tool", "route-create-v2"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("manual branch missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestPrompt_DnsHostCloudflare_Auto(t *testing.T) {
+	cs := connectWithCF(t, cfOK(`{"success":true,"result":[]}`))
+	gp, _ := cs.GetPrompt(context.Background(), &mcp.GetPromptParams{
+		Name:      "point-a-domain",
+		Arguments: map[string]string{"domain": "example.com", "deployment": "web", "dnsHost": "cloudflare"},
+	})
+	text := gp.Messages[0].Content.(*mcp.TextContent).Text
+	if !strings.Contains(text, "cf-dns-create") {
+		t.Fatalf("dnsHost=cloudflare must use cf-dns-create:\n%s", text)
+	}
+}
+
+func TestPrompt_DnsHostInvalid(t *testing.T) {
+	cs := connectWithCF(t, cfOK(`{"success":true,"result":[]}`))
+	_, err := cs.GetPrompt(context.Background(), &mcp.GetPromptParams{
+		Name:      "point-a-domain",
+		Arguments: map[string]string{"domain": "example.com", "deployment": "web", "dnsHost": "godaddy"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "dnsHost") {
+		t.Fatalf("invalid dnsHost should error, got %v", err)
+	}
+}
+
+func TestPrompt_RegisterForcesCloudflareDNS(t *testing.T) {
+	cs := connectWithCF(t, cfOK(`{"success":true,"result":[]}`))
+	// registerDomain=true with dnsHost=other → register implies cloudflare DNS.
+	gp, _ := cs.GetPrompt(context.Background(), &mcp.GetPromptParams{
+		Name:      "point-a-domain",
+		Arguments: map[string]string{"domain": "example.com", "deployment": "web", "registerDomain": "true", "dnsHost": "other"},
+	})
+	text := gp.Messages[0].Content.(*mcp.TextContent).Text
+	if !strings.Contains(text, "cf-dns-create") {
+		t.Fatalf("registering implies Cloudflare DNS (cf-dns-create):\n%s", text)
+	}
+}
+
 func TestPrompt_MissingArgs(t *testing.T) {
 	cs := connectWithCF(t, cfOK(`{"success":true,"result":[]}`))
 	_, err := cs.GetPrompt(context.Background(), &mcp.GetPromptParams{

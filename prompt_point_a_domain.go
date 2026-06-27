@@ -55,6 +55,7 @@ func registerPointADomainPrompt(server *mcp.Server) {
 			{Name: "location", Description: "Jetder location id (optional; falls back to JETDER_DEFAULT_LOCATION)"},
 			{Name: "path", Description: "optional route path prefix (must start with /)"},
 			{Name: "registerDomain", Description: "set to \"true\" to include buying the domain via Cloudflare Registrar first (default false)"},
+			{Name: "dnsHost", Description: "where the domain's DNS is managed: \"cloudflare\" (this server sets records automatically) or \"other\" (you add the records at your own DNS provider). Defaults to cloudflare when registering, else asks."},
 		},
 	}, pointADomainHandler)
 }
@@ -90,6 +91,19 @@ func pointADomainHandler(_ context.Context, req *mcp.GetPromptRequest) (*mcp.Get
 		return nil, err
 	}
 	register := strings.EqualFold(strings.TrimSpace(args["registerDomain"]), "true")
+
+	// dnsHost: where DNS records get created. "cloudflare" → this server sets them
+	// via cf-dns-create; "other" → the user adds them at their own DNS provider
+	// (this server can't). Registering a domain via Cloudflare implies cloudflare.
+	dnsHost := strings.ToLower(strings.TrimSpace(args["dnsHost"]))
+	switch dnsHost {
+	case "", "cloudflare", "other":
+	default:
+		return nil, fmt.Errorf("point-a-domain: dnsHost must be \"cloudflare\" or \"other\"")
+	}
+	if register {
+		dnsHost = "cloudflare"
+	}
 
 	// projectArg/locationArg render either an explicit `key="value"` or an
 	// instruction to OMIT the arg (so the tool's env default applies). Never emit
@@ -131,11 +145,28 @@ func pointADomainHandler(_ context.Context, req *mcp.GetPromptRequest) (*mcp.Get
 	b.WriteString("   - pointTo (the A/AAAA/CNAME records that point the domain at Jetder)\n\n")
 	step++
 
-	fmt.Fprintf(&b, "%d. CREATE THOSE RECORDS IN CLOUDFLARE:\n", step)
-	b.WriteString("   For EACH record from the step above (ownershipRecord, every sslRecords entry, every pointTo entry),\n")
-	b.WriteString("   call cf-dns-create with its type, name, and content (value). cf-dns-create is idempotent:\n")
-	b.WriteString("   it reports alreadyExists for identical records and errors on a real conflict — never overwrites.\n")
-	b.WriteString("   (Leave zoneId empty to auto-resolve the zone, or first call cf-zone-lookup.)\n\n")
+	switch dnsHost {
+	case "other":
+		fmt.Fprintf(&b, "%d. ADD THOSE RECORDS AT YOUR OWN DNS PROVIDER (manual):\n", step)
+		b.WriteString("   The domain's DNS is NOT on Cloudflare, so this server cannot set the records.\n")
+		b.WriteString("   Show the user EACH record from the step above and ask them to add it at their DNS\n")
+		b.WriteString("   provider (GoDaddy, Namecheap, etc.): the ownershipRecord (TXT), every sslRecords\n")
+		b.WriteString("   entry (TXT), and every pointTo entry (A/AAAA/CNAME) — exact type, name, and value.\n")
+		b.WriteString("   Do NOT use the Cloudflare DNS tool here. Wait for the user to confirm they've added them.\n\n")
+	case "cloudflare":
+		fmt.Fprintf(&b, "%d. CREATE THOSE RECORDS IN CLOUDFLARE:\n", step)
+		b.WriteString("   For EACH record from the step above (ownershipRecord, every sslRecords entry, every pointTo entry),\n")
+		b.WriteString("   call cf-dns-create with its type, name, and content (value). cf-dns-create is idempotent:\n")
+		b.WriteString("   it reports alreadyExists for identical records and errors on a real conflict — never overwrites.\n")
+		b.WriteString("   (Leave zoneId empty to auto-resolve the zone, or first call cf-zone-lookup.)\n\n")
+	default: // unset — ask which path applies
+		fmt.Fprintf(&b, "%d. CREATE THOSE RECORDS (choose based on where the domain's DNS is hosted):\n", step)
+		b.WriteString("   - If the DNS is on CLOUDFLARE: for each record above, call cf-dns-create (idempotent;\n")
+		b.WriteString("     never overwrites; leave zoneId empty to auto-resolve).\n")
+		b.WriteString("   - If the DNS is at ANOTHER provider (GoDaddy/Namecheap/etc.): this server cannot set\n")
+		b.WriteString("     them — show the user each record (type/name/value) to add at their provider, and wait.\n")
+		b.WriteString("   (Re-run this prompt with dnsHost=\"cloudflare\" or dnsHost=\"other\" to get a single path.)\n\n")
+	}
 	step++
 
 	fmt.Fprintf(&b, "%d. WAIT FOR VERIFICATION:\n", step)
