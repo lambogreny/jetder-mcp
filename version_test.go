@@ -28,7 +28,26 @@ func TestServerVersion_ReportedOnInitialize(t *testing.T) {
 	if res.ServerInfo.Name != serverName {
 		t.Fatalf("server name = %q, want %q", res.ServerInfo.Name, serverName)
 	}
-	if res.ServerInfo.Version != serverVersion {
-		t.Fatalf("server version = %q, want %q", res.ServerInfo.Version, serverVersion)
+	if res.ServerInfo.Version != versionString() {
+		t.Fatalf("server version = %q, want %q", res.ServerInfo.Version, versionString())
+	}
+}
+
+// TestServerVersion_EmptyFallback_OnInitialize guards the SAME empty→"dev" fallback
+// for the MCP serverInfo path (not just the --version flag): a build with an empty
+// injected version must still advertise "dev" over the handshake, never "".
+func TestServerVersion_EmptyFallback_OnInitialize(t *testing.T) {
+	orig := serverVersion
+	t.Cleanup(func() { serverVersion = orig })
+	serverVersion = ""
+
+	a := newTestAdapter(t, `{"ok":true,"result":{}}`, "p", "l")
+	cs := connectInMemory(t, a)
+	res := cs.InitializeResult()
+	if res == nil || res.ServerInfo == nil {
+		t.Fatalf("no InitializeResult/ServerInfo")
+	}
+	if res.ServerInfo.Version != "dev" {
+		t.Fatalf("empty version: serverInfo.version = %q, want \"dev\"", res.ServerInfo.Version)
 	}
 }

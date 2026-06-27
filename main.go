@@ -9,7 +9,10 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
+	"os"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -25,7 +28,36 @@ const serverName = "jetder-mcp"
 // for source builds. Keep this in sync with the latest release tag.
 var serverVersion = "v0.1.0"
 
+// versionString returns the version to report, falling back to "dev" when the
+// version is empty (e.g. a build that didn't inject -X main.serverVersion). It
+// never panics.
+func versionString() string {
+	if v := strings.TrimSpace(serverVersion); v != "" {
+		return v
+	}
+	return "dev"
+}
+
+// handleVersionFlag prints "jetder-mcp <version>" to out and returns true if any
+// arg is a version flag (--version, -version, -v). Kept separate from main() so it
+// can be tested without exiting the process. It does NOT touch stdio otherwise, so
+// a normal no-arg launch (how an MCP client starts the server) is unaffected.
+func handleVersionFlag(args []string, out io.Writer) bool {
+	for _, a := range args {
+		switch a {
+		case "--version", "-version", "-v":
+			fmt.Fprintf(out, "%s %s\n", serverName, versionString())
+			return true
+		}
+	}
+	return false
+}
+
 func main() {
+	// Handle --version before starting the server (so it never blocks on stdio).
+	if handleVersionFlag(os.Args[1:], os.Stdout) {
+		os.Exit(0)
+	}
 	if err := run(); err != nil {
 		// Errors are already token-redacted by the adapter; safe to log.
 		log.Fatalf("jetder-mcp: %v", err)
@@ -54,7 +86,7 @@ func run() error {
 // (Cloudflare not configured); cf-* tools still register but error when invoked.
 func buildServer(adapter *jetder.Adapter, cf *cloudflare.Client) *mcp.Server {
 	server := mcp.NewServer(
-		&mcp.Implementation{Name: serverName, Version: serverVersion},
+		&mcp.Implementation{Name: serverName, Version: versionString()},
 		&mcp.ServerOptions{
 			// Advertise the tools capability but disable tool-list-changed
 			// notifications: our tool set is static, so emitting
