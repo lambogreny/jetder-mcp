@@ -155,6 +155,33 @@ func TestCFTool_Register_SuccessViaToolLayer(t *testing.T) {
 	}
 }
 
+// TestCFTool_TokenNeverLeaksViaToolLayer: the CF API error echoes the token; the
+// tool result content must NOT contain it (redaction boundary holds at the tool layer).
+func TestCFTool_TokenNeverLeaksViaToolLayer(t *testing.T) {
+	cs := connectWithCF(t, func(w http.ResponseWriter, _ *http.Request) {
+		// token value used by connectWithCF is "cf-tok"; echo it in the error.
+		_, _ = w.Write([]byte(`{"success":false,"errors":[{"code":1,"message":"bad token Bearer cf-tok / cf-tok"}]}`))
+	})
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
+		Name: "cf-domain-check", Arguments: map[string]any{"domains": []any{"x.com"}},
+	})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("expected IsError from CF api error")
+	}
+	var sb strings.Builder
+	for _, c := range res.Content {
+		if tc, ok := c.(*mcp.TextContent); ok {
+			sb.WriteString(tc.Text)
+		}
+	}
+	if strings.Contains(sb.String(), "cf-tok") {
+		t.Fatalf("TOKEN LEAK via tool layer: %q", sb.String())
+	}
+}
+
 // TestCFTool_Annotations: cf reads = readOnly, cf-dns-create + cf-domain-register = destructive.
 func TestCFTool_Annotations(t *testing.T) {
 	cs := connectWithCF(t, cfOK(`{"success":true,"result":[]}`))

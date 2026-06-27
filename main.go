@@ -58,7 +58,8 @@ func buildServer(adapter *jetder.Adapter, cf *cloudflare.Client) *mcp.Server {
 			// "notifications/tools/list_changed" (the inferred default when
 			// tools are added) is noise. ToolCapabilities{} => ListChanged:false.
 			Capabilities: &mcp.ServerCapabilities{
-				Tools: &mcp.ToolCapabilities{},
+				Tools:   &mcp.ToolCapabilities{},
+				Prompts: &mcp.PromptCapabilities{}, // advertise prompts, suppress list_changed
 			},
 		},
 	)
@@ -73,6 +74,7 @@ func buildServer(adapter *jetder.Adapter, cf *cloudflare.Client) *mcp.Server {
 	registerResourceWriteTools(server, adapter)
 	registerGrantsAndEmailTools(server, adapter)
 	registerCloudflareTools(server, cf)
+	registerPointADomainPrompt(server)
 
 	return server
 }
