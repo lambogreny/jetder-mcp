@@ -51,6 +51,8 @@ a subprocess. Building and pushing a container image happens **on your machine**
 (the server never builds); Jetder then pulls that image using a pull-secret stored
 on the Jetder side (see [Git / GHCR](#what-the-git--ghcr-integration-does)).
 
+![Overall architecture](./img/architecture-overview.png)
+
 ## Deploy flow
 
 ```mermaid
@@ -73,6 +75,8 @@ sequenceDiagram
     J-->>M: status=success, url
     M-->>U: live URL
 ```
+
+![Deploy flow](./img/deploy-flow.png)
 
 ## Buy + point a domain flow
 
@@ -99,6 +103,8 @@ sequenceDiagram
     M->>J: map domain to deployment
     M-->>U: live at https://your-domain
 ```
+
+![Domain to route flow](./img/domain-route-flow.png)
 
 ## Credential / auth flow
 
