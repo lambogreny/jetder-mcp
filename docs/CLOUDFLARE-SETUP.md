@@ -69,6 +69,66 @@ price immediately before buying and rejects unless you pass all of:
 It registers exactly one domain per call and never auto-retries; poll
 `cf-registration-status` for the workflow result.
 
+### Registrant contact (who legally owns the domain)
+
+Every registration needs a **registrant contact** — the legal owner's WHOIS
+details that go to the registry. You can either let Cloudflare use the account's
+default address book, or have jetder-mcp supply the contact so you never have to
+touch the Cloudflare dashboard.
+
+> ⚠️ This data is **legally binding**. Inaccurate WHOIS details can get a domain
+> **suspended**. When you supply a contact you must also pass
+> `acceptRegistrantAccuracy: true`.
+
+Two ways to provide it (an explicit arg wins over env, per field):
+
+1. **Inline arg** on `cf-domain-register`:
+
+   ```json
+   {
+     "domain": "example.com",
+     "confirmText": "REGISTER example.com",
+     "maxRegistrationCost": 12.20, "currency": "USD",
+     "acceptNonRefundable": true,
+     "acceptRegistrantAccuracy": true,
+     "registrant": {
+       "name": "Ada Lovelace",
+       "email": "ada@example.com",
+       "phone": "+1.5555550123",
+       "street": "12 Analytical Engine Way",
+       "city": "London", "state": "LDN",
+       "postalCode": "EC1A 1BB", "countryCode": "GB"
+     }
+   }
+   ```
+
+2. **Environment** (so you set it once and reuse it). These are **PII** — put them
+   in your **user-level** MCP config/secret store, **never** commit them to a
+   project config:
+
+   ```bash
+   export CLOUDFLARE_REGISTRANT_NAME="Ada Lovelace"
+   export CLOUDFLARE_REGISTRANT_EMAIL="ada@example.com"
+   export CLOUDFLARE_REGISTRANT_PHONE="+1.5555550123"   # E.164 with a dot
+   export CLOUDFLARE_REGISTRANT_STREET="12 Analytical Engine Way"
+   export CLOUDFLARE_REGISTRANT_CITY="London"
+   export CLOUDFLARE_REGISTRANT_STATE="LDN"
+   export CLOUDFLARE_REGISTRANT_POSTAL_CODE="EC1A 1BB"
+   export CLOUDFLARE_REGISTRANT_COUNTRY_CODE="GB"
+   # optional: CLOUDFLARE_REGISTRANT_ORG, CLOUDFLARE_REGISTRANT_FAX
+   ```
+
+Required fields: `name`, `email`, `phone`, `street`, `city`, `state`,
+`postalCode`, `countryCode`. `organization` and `fax` are optional. `phone`/`fax`
+must be **E.164 with a dot**: `+{countryCode}.{number}` (e.g. `+1.5555550123`).
+`countryCode` is an ISO 3166-1 alpha-2 code (e.g. `US`, `GB`). A **partial**
+contact is rejected before any purchase — supply all required fields or none
+(none = use the account default). If you supply none and the account has no
+default address book entry, Cloudflare rejects the registration.
+
+The contact is sent only to Cloudflare/the registry — jetder-mcp never echoes it
+back, and redacts it (along with credentials) from any error message.
+
 ## The `point-a-domain` prompt
 
 The `point-a-domain` MCP **prompt** gives an agent the full guided playbook

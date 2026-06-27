@@ -7,6 +7,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -143,6 +144,173 @@ type RegisterOptions struct {
 	AutoRenew   bool
 	PrivacyMode string // e.g. "redaction"
 	Years       int    // 1..10
+
+	// Registrant, when non-nil, supplies the registrant contact inline (sent as
+	// contacts.registrant in the registration body). When nil, the registration
+	// falls back to the Cloudflare account's default address book — the original
+	// behavior. CF derives the admin/tech/billing contacts from the registrant.
+	Registrant *RegistrantContact
+}
+
+// RegistrantContact is the registrant (legal domain owner) contact submitted to
+// the registry. These are real, legally-binding WHOIS details — inaccurate data
+// can lead to domain suspension. The fields mirror CF's contacts.registrant shape.
+type RegistrantContact struct {
+	Name         string // full legal name (required)
+	Organization string // optional (companies only)
+	Email        string // required, email format
+	Phone        string // required, E.164 with dot: +{cc}.{number}
+	Fax          string // optional, same format as Phone
+	Street       string // required
+	City         string // required
+	State        string // required (standard abbreviation where applicable)
+	PostalCode   string // required
+	CountryCode  string // required, ISO 3166-1 alpha-2 (canonicalized to upper)
+}
+
+// field length caps — generous but bounded to avoid sending absurd payloads.
+const (
+	maxContactNameLen   = 255
+	maxContactEmailLen  = 254
+	maxContactPhoneLen  = 32
+	maxContactStreetLen = 255
+	maxContactCityLen   = 128
+	maxContactStateLen  = 128
+	maxContactPostalLen = 32
+	maxContactOrgLen    = 255
+)
+
+var (
+	// reContactEmail is a pragmatic email check (not full RFC 5322).
+	reContactEmail = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
+	// reContactPhone is CF's dotted E.164: +{country}.{number}.
+	reContactPhone = regexp.MustCompile(`^\+\d{1,3}\.\d{4,15}$`)
+	// reContactCountry is an ISO 3166-1 alpha-2 code (canonicalized to upper).
+	reContactCountry = regexp.MustCompile(`^[A-Z]{2}$`)
+)
+
+// normalize trims every field and uppercases the country code. It does NOT
+// otherwise massage values (e.g. it won't reformat a phone number).
+func (rc *RegistrantContact) normalize() {
+	rc.Name = strings.TrimSpace(rc.Name)
+	rc.Organization = strings.TrimSpace(rc.Organization)
+	rc.Email = strings.TrimSpace(rc.Email)
+	rc.Phone = strings.TrimSpace(rc.Phone)
+	rc.Fax = strings.TrimSpace(rc.Fax)
+	rc.Street = strings.TrimSpace(rc.Street)
+	rc.City = strings.TrimSpace(rc.City)
+	rc.State = strings.TrimSpace(rc.State)
+	rc.PostalCode = strings.TrimSpace(rc.PostalCode)
+	rc.CountryCode = strings.ToUpper(strings.TrimSpace(rc.CountryCode))
+}
+
+// Validate fail-closes on any missing/malformed required field. Error messages
+// name the offending FIELD, never its value (PII never appears in errors). It
+// normalizes (trims, uppercases country) in place as a side effect.
+func (rc *RegistrantContact) Validate() error {
+	rc.normalize()
+	type fld struct {
+		name  string
+		value string
+		max   int
+	}
+	required := []fld{
+		{"registrant.name", rc.Name, maxContactNameLen},
+		{"registrant.email", rc.Email, maxContactEmailLen},
+		{"registrant.phone", rc.Phone, maxContactPhoneLen},
+		{"registrant.street", rc.Street, maxContactStreetLen},
+		{"registrant.city", rc.City, maxContactCityLen},
+		{"registrant.state", rc.State, maxContactStateLen},
+		{"registrant.postalCode", rc.PostalCode, maxContactPostalLen},
+		{"registrant.countryCode", rc.CountryCode, 2},
+	}
+	for _, f := range required {
+		if f.value == "" {
+			return fmt.Errorf("registrant contact incomplete: %s is required", f.name)
+		}
+		if len(f.value) > f.max {
+			return fmt.Errorf("registrant contact invalid: %s exceeds %d chars", f.name, f.max)
+		}
+	}
+	if len(rc.Organization) > maxContactOrgLen {
+		return fmt.Errorf("registrant contact invalid: registrant.organization exceeds %d chars", maxContactOrgLen)
+	}
+	if !reContactEmail.MatchString(rc.Email) {
+		return errors.New("registrant contact invalid: registrant.email is not a valid email")
+	}
+	if !reContactPhone.MatchString(rc.Phone) {
+		return errors.New("registrant contact invalid: registrant.phone must be E.164 with a dot, e.g. +1.5555555555")
+	}
+	if rc.Fax != "" {
+		if len(rc.Fax) > maxContactPhoneLen || !reContactPhone.MatchString(rc.Fax) {
+			return errors.New("registrant contact invalid: registrant.fax must be E.164 with a dot, e.g. +1.5555555555")
+		}
+	}
+	if !reContactCountry.MatchString(rc.CountryCode) {
+		return errors.New("registrant contact invalid: registrant.countryCode must be an ISO 3166-1 alpha-2 code, e.g. US")
+	}
+	return nil
+}
+
+// body builds the CF contacts.registrant JSON object from a validated contact.
+func (rc *RegistrantContact) body() map[string]any {
+	addr := map[string]any{
+		"street":       rc.Street,
+		"city":         rc.City,
+		"state":        rc.State,
+		"postal_code":  rc.PostalCode,
+		"country_code": rc.CountryCode,
+	}
+	postal := map[string]any{
+		"name":    rc.Name,
+		"address": addr,
+	}
+	if rc.Organization != "" {
+		postal["organization"] = rc.Organization
+	}
+	reg := map[string]any{
+		"email":       rc.Email,
+		"phone":       rc.Phone,
+		"postal_info": postal,
+	}
+	if rc.Fax != "" {
+		reg["fax"] = rc.Fax
+	}
+	return map[string]any{"registrant": reg}
+}
+
+// piiValues returns the contact's sensitive substrings worth redacting from any
+// error/log surface. Short, high-collision fields (country code, state) are
+// excluded — replacing "US"/"TX" everywhere would corrupt unrelated text.
+func (rc *RegistrantContact) piiValues() []string {
+	if rc == nil {
+		return nil
+	}
+	cands := []string{rc.Name, rc.Organization, rc.Email, rc.Phone, rc.Fax, rc.Street, rc.City, rc.PostalCode}
+	out := make([]string, 0, len(cands))
+	for _, v := range cands {
+		// Only redact reasonably distinctive values (>=4 chars) to avoid noise.
+		if len(strings.TrimSpace(v)) >= 4 {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// redactRegistrantErr strips the contact's PII (and CF credentials) from err.
+// It is per-call (the contact is a parameter, not global mutable state).
+func (c *Client) redactRegistrantErr(err error, rc *RegistrantContact) error {
+	if err == nil {
+		return nil
+	}
+	s := c.Redact(err.Error()) // credentials first
+	for _, v := range rc.piiValues() {
+		s = strings.ReplaceAll(s, v, "[REDACTED]")
+	}
+	if s != err.Error() {
+		return errors.New(s)
+	}
+	return err
 }
 
 // PurchaseConfirmation carries the explicit, fail-closed confirmation a caller
@@ -161,6 +329,11 @@ type PurchaseConfirmation struct {
 	// AcceptAutoRenew must be true to enable auto-renew (a recurring future
 	// billing commitment). Required only when RegisterOptions.AutoRenew is set.
 	AcceptAutoRenew bool
+	// AcceptRegistrantAccuracy must be true to submit an inline/env registrant
+	// contact: the data is legally binding and inaccurate WHOIS details can lead
+	// to domain suspension. Required ONLY when RegisterOptions.Registrant is set;
+	// the account-default (no inline contact) path does not need a fresh ack.
+	AcceptRegistrantAccuracy bool
 }
 
 // ConfirmTextFor returns the exact phrase the caller must supply.
@@ -196,6 +369,18 @@ func (c *Client) Register(ctx context.Context, accountArg, domain string, conf P
 	// AutoRenew is a recurring future billing commitment — require explicit ack.
 	if opts.AutoRenew && !conf.AcceptAutoRenew {
 		return nil, errors.New("purchase rejected: autoRenew requires acceptAutoRenew=true (recurring future billing)")
+	}
+
+	// ---- registrant contact (inline/env) validation — BEFORE any network call,
+	// so malformed PII is never sent to CF (not even to the price check). ----
+	if opts.Registrant != nil {
+		if !conf.AcceptRegistrantAccuracy {
+			return nil, errors.New("purchase rejected: a registrant contact requires acceptRegistrantAccuracy=true (legally-binding WHOIS data; inaccuracy can cause suspension)")
+		}
+		if err := opts.Registrant.Validate(); err != nil {
+			// validate() never includes field VALUES, only field names.
+			return nil, fmt.Errorf("purchase rejected: %v", err)
+		}
 	}
 
 	// fresh price/availability check — SOURCE OF TRUTH right before buying.
@@ -259,11 +444,17 @@ func (c *Client) Register(ctx context.Context, accountArg, domain string, conf P
 	if opts.Years != 0 {
 		body["years"] = opts.Years
 	}
+	// Inline registrant contact (already validated above). Omitted when nil, so
+	// the account-default address book is used — unchanged legacy behavior.
+	if opts.Registrant != nil {
+		body["contacts"] = opts.Registrant.body()
+	}
 
 	var res RegistrationResult
 	path := "/accounts/" + url.PathEscape(acct) + "/registrar/registrations"
 	if err := c.do(ctx, http.MethodPost, path, body, &res); err != nil {
-		return nil, err
+		// Redact the contact PII (and credentials) from any CF error surface.
+		return nil, c.redactRegistrantErr(err, opts.Registrant)
 	}
 	if res.DomainName == "" {
 		res.DomainName = domain

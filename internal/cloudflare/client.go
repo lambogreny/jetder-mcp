@@ -33,6 +33,20 @@ const (
 	EnvToken     = "CLOUDFLARE_API_TOKEN"
 	EnvAccountID = "CLOUDFLARE_ACCOUNT_ID" // required only for Registrar (account-scoped)
 	EnvBaseURL   = "CLOUDFLARE_API_BASE"   // optional override (testing)
+
+	// Registrant contact fallback (PII — set in USER-level MCP config/secret,
+	// never commit to project config). Used by cf-domain-register when the call
+	// omits an inline registrant; an explicit arg always wins over these.
+	EnvRegistrantName        = "CLOUDFLARE_REGISTRANT_NAME"
+	EnvRegistrantOrg         = "CLOUDFLARE_REGISTRANT_ORG"
+	EnvRegistrantEmail       = "CLOUDFLARE_REGISTRANT_EMAIL"
+	EnvRegistrantPhone       = "CLOUDFLARE_REGISTRANT_PHONE"
+	EnvRegistrantFax         = "CLOUDFLARE_REGISTRANT_FAX"
+	EnvRegistrantStreet      = "CLOUDFLARE_REGISTRANT_STREET"
+	EnvRegistrantCity        = "CLOUDFLARE_REGISTRANT_CITY"
+	EnvRegistrantState       = "CLOUDFLARE_REGISTRANT_STATE"
+	EnvRegistrantPostalCode  = "CLOUDFLARE_REGISTRANT_POSTAL_CODE"
+	EnvRegistrantCountryCode = "CLOUDFLARE_REGISTRANT_COUNTRY_CODE"
 )
 
 // ErrNotConfigured is returned when Cloudflare env is not set. Callers (CF tools)

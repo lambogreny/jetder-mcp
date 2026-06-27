@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -273,6 +275,66 @@ type CFDomainRegisterInput struct {
 	AutoRenew       bool   `json:"autoRenew,omitempty" jsonschema:"enable auto-renew (requires acceptAutoRenew)"`
 	AcceptAutoRenew bool   `json:"acceptAutoRenew,omitempty" jsonschema:"must be true to enable autoRenew (recurring future billing)"`
 	PrivacyMode     string `json:"privacyMode,omitempty" jsonschema:"e.g. 'redaction'"`
+
+	// Registrant contact (optional). When provided (or any CLOUDFLARE_REGISTRANT_*
+	// env var is set), the registrant is submitted to the registry and
+	// acceptRegistrantAccuracy must be true. When omitted entirely, the Cloudflare
+	// account's default address book is used. The contact is NEVER echoed back.
+	Registrant               *RegistrantInput `json:"registrant,omitempty" jsonschema:"registrant (legal domain owner) contact; if omitted, falls back to CLOUDFLARE_REGISTRANT_* env, then the CF account default"`
+	AcceptRegistrantAccuracy bool             `json:"acceptRegistrantAccuracy,omitempty" jsonschema:"must be true when supplying a registrant contact (data is legally binding; inaccurate WHOIS can cause suspension)"`
+}
+
+// RegistrantInput is the tool-facing registrant contact. Field VALUES are PII and
+// are never returned in any output or error.
+type RegistrantInput struct {
+	Name         string `json:"name,omitempty" jsonschema:"full legal name of the registrant"`
+	Organization string `json:"organization,omitempty" jsonschema:"organization/company name (optional)"`
+	Email        string `json:"email,omitempty" jsonschema:"contact email"`
+	Phone        string `json:"phone,omitempty" jsonschema:"phone in E.164 with a dot: +{countryCode}.{number} e.g. +1.5555555555"`
+	Fax          string `json:"fax,omitempty" jsonschema:"fax in E.164 with a dot (optional)"`
+	Street       string `json:"street,omitempty" jsonschema:"street address incl. building/suite"`
+	City         string `json:"city,omitempty" jsonschema:"city or locality"`
+	State        string `json:"state,omitempty" jsonschema:"state/province/region (standard abbreviation where applicable)"`
+	PostalCode   string `json:"postalCode,omitempty" jsonschema:"postal or ZIP code"`
+	CountryCode  string `json:"countryCode,omitempty" jsonschema:"ISO 3166-1 alpha-2 country code, e.g. US"`
+}
+
+// resolveRegistrant builds the registrant contact for a register call, preferring
+// the inline arg fields over CLOUDFLARE_REGISTRANT_* env (per-field override). It
+// returns (nil, false) when NEITHER arg nor env supplies any field — meaning "use
+// the account default address book" (legacy behavior). The bool reports whether a
+// contact intent was detected (so the handler can require acceptRegistrantAccuracy
+// and the validator can flag a partial contact as an error, not a silent default).
+func resolveRegistrant(in *RegistrantInput) (*cloudflare.RegistrantContact, bool) {
+	pick := func(arg, env string) string {
+		if v := strings.TrimSpace(arg); v != "" {
+			return v
+		}
+		return strings.TrimSpace(os.Getenv(env))
+	}
+	var a RegistrantInput
+	if in != nil {
+		a = *in
+	}
+	rc := cloudflare.RegistrantContact{
+		Name:         pick(a.Name, cloudflare.EnvRegistrantName),
+		Organization: pick(a.Organization, cloudflare.EnvRegistrantOrg),
+		Email:        pick(a.Email, cloudflare.EnvRegistrantEmail),
+		Phone:        pick(a.Phone, cloudflare.EnvRegistrantPhone),
+		Fax:          pick(a.Fax, cloudflare.EnvRegistrantFax),
+		Street:       pick(a.Street, cloudflare.EnvRegistrantStreet),
+		City:         pick(a.City, cloudflare.EnvRegistrantCity),
+		State:        pick(a.State, cloudflare.EnvRegistrantState),
+		PostalCode:   pick(a.PostalCode, cloudflare.EnvRegistrantPostalCode),
+		CountryCode:  pick(a.CountryCode, cloudflare.EnvRegistrantCountryCode),
+	}
+	intent := rc.Name != "" || rc.Organization != "" || rc.Email != "" || rc.Phone != "" ||
+		rc.Fax != "" || rc.Street != "" || rc.City != "" || rc.State != "" ||
+		rc.PostalCode != "" || rc.CountryCode != ""
+	if !intent {
+		return nil, false
+	}
+	return &rc, true
 }
 
 func registerCFDomainRegister(server *mcp.Server, cf *cloudflare.Client) {
@@ -284,15 +346,21 @@ func registerCFDomainRegister(server *mcp.Server, cf *cloudflare.Client) {
 		if cf == nil {
 			return nil, CFRegistrationOutput{}, errCFNotConfigured()
 		}
+		// Resolve the registrant contact from the arg (per-field) over the
+		// CLOUDFLARE_REGISTRANT_* env. nil => use the account default address book.
+		// Register() only consults AcceptRegistrantAccuracy when a contact is set.
+		registrant, _ := resolveRegistrant(in.Registrant)
+
 		conf := cloudflare.PurchaseConfirmation{
-			ConfirmText:         in.ConfirmText,
-			MaxRegistrationCost: in.MaxRegistrationCost,
-			Currency:            in.Currency,
-			AcceptNonRefundable: in.AcceptNonRefundable,
-			AllowPremium:        in.AcceptPremium,
-			AcceptAutoRenew:     in.AcceptAutoRenew,
+			ConfirmText:              in.ConfirmText,
+			MaxRegistrationCost:      in.MaxRegistrationCost,
+			Currency:                 in.Currency,
+			AcceptNonRefundable:      in.AcceptNonRefundable,
+			AllowPremium:             in.AcceptPremium,
+			AcceptAutoRenew:          in.AcceptAutoRenew,
+			AcceptRegistrantAccuracy: in.AcceptRegistrantAccuracy,
 		}
-		opts := cloudflare.RegisterOptions{AutoRenew: in.AutoRenew, PrivacyMode: in.PrivacyMode, Years: in.Years}
+		opts := cloudflare.RegisterOptions{AutoRenew: in.AutoRenew, PrivacyMode: in.PrivacyMode, Years: in.Years, Registrant: registrant}
 		res, err := cf.Register(ctx, in.AccountID, in.Domain, conf, opts)
 		if err != nil {
 			return nil, CFRegistrationOutput{}, err
