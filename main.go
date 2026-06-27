@@ -13,6 +13,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/lambogreny/jetder-mcp/internal/cloudflare"
 	"github.com/lambogreny/jetder-mcp/internal/jetder"
 )
 
@@ -33,15 +34,22 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	// Cloudflare is OPTIONAL: New() returns (nil,nil) when not configured, so a
+	// jetder-only server starts fine. cf tools then report CF is not configured.
+	cf, err := cloudflare.New()
+	if err != nil {
+		return err
+	}
 
-	server := buildServer(adapter)
+	server := buildServer(adapter, cf)
 
 	// Serve over stdin/stdout until the client disconnects.
 	return server.Run(context.Background(), &mcp.StdioTransport{})
 }
 
-// buildServer constructs the MCP server with all tools registered.
-func buildServer(adapter *jetder.Adapter) *mcp.Server {
+// buildServer constructs the MCP server with all tools registered. cf may be nil
+// (Cloudflare not configured); cf-* tools still register but error when invoked.
+func buildServer(adapter *jetder.Adapter, cf *cloudflare.Client) *mcp.Server {
 	server := mcp.NewServer(
 		&mcp.Implementation{Name: serverName, Version: serverVersion},
 		&mcp.ServerOptions{
@@ -64,6 +72,7 @@ func buildServer(adapter *jetder.Adapter) *mcp.Server {
 	registerResourceReadTools(server, adapter)
 	registerResourceWriteTools(server, adapter)
 	registerGrantsAndEmailTools(server, adapter)
+	registerCloudflareTools(server, cf)
 
 	return server
 }

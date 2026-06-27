@@ -38,7 +38,7 @@ func newTestAdapter(t *testing.T, body, defProject, defLocation string) *jetder.
 func connectInMemory(t *testing.T, adapter *jetder.Adapter) *mcp.ClientSession {
 	t.Helper()
 	ctx := context.Background()
-	server := buildServer(adapter)
+	server := buildServer(adapter, nil) // CF not configured in these tests
 	st, ct := mcp.NewInMemoryTransports()
 
 	if _, err := server.Connect(ctx, st, nil); err != nil {
