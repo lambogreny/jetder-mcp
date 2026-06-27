@@ -1,39 +1,81 @@
 # jetder-mcp
 
 An [MCP](https://modelcontextprotocol.io) (Model Context Protocol) server that
-exposes the [Jetder](https://jetder.com) API as MCP tools and resources, served
-over **stdio**.
+exposes the [Jetder](https://jetder.com) API to AI agents — **62 tools** and
+**3 guided prompts** for deployments, domains, DNS, billing, secrets, and more,
+served over **stdio**.
 
-> **Status:** feature-complete for the supported API surface (54 tools). Covers
-> Me, Location, Project, Deployment (read + deploy/pause/resume/rollback),
-> Domain/Route, Billing (read), Disk, ServiceAccount, Role, Secret/PullSecret
-> (redacted), WorkloadIdentity, Organization, and Email. Deferred resources
-> (EnvGroup, OrganizationRole, GitConnect, ActivityLog, Database) are not yet
-> reachable through the pinned API client. Also deferred for safety until an
-> explicit opt-in: `role-bind` (replace-all role set = implicit revoke) and route
-> `forwardAuth` (upstream validation contradiction). `*delete`, role revoke, and
-> service-account key deletion are intentionally not exposed.
+## Quick start
 
-## Requirements
+**1. Get access.** You need a Jetder API token (and a project) from the owner.
+Request one here: **<https://thunder.in.th/>**.
 
-- Go 1.23+
-- A Jetder API token
-
-## Setup
+**2. Install** (macOS / Linux, amd64 / arm64). The script downloads a release
+binary, verifies its SHA-256 checksum, and installs it to `~/.local/bin`:
 
 ```sh
-cd mcp
-# Jetder uses HTTP Basic auth: service-account email + API token.
-export JETDER_AUTH_USER="<svc>@<project>.serviceaccount.jetder.com"  # required (username)
-export JETDER_TOKEN="<your-jetder-api-token>"                        # required (password)
-# export JETDER_ENDPOINT="https://api.jetder.com/"  # optional override
-
-go build ./...
-go run .            # starts the MCP server on stdin/stdout
+curl -fsSL https://raw.githubusercontent.com/lambogreny/jetder-mcp/main/install.sh | sh
 ```
 
-The server reads JSON-RPC from stdin and writes to stdout, so it is meant to be
-launched by an MCP client (e.g. Claude Code) rather than run interactively.
+> Prefer to review first? Download `install.sh`, read it, then run `sh install.sh`.
+> Pin a version with `JETDER_MCP_VERSION=v1.2.3`, or set `INSTALL_DIR`.
+>
+> Or build from source: `go build -o jetder-mcp .` (Go 1.23+).
+
+**3. Add it to your MCP client.** Point the client at the installed binary and
+supply your token via `env`:
+
+- **Claude Desktop** (`claude_desktop_config.json`), **Cursor** (`.cursor/mcp.json`),
+  **Claude Code** (`.mcp.json`) — all use the `mcpServers` shape:
+
+  ```json
+  {
+    "mcpServers": {
+      "jetder": {
+        "command": "jetder-mcp",
+        "env": {
+          "JETDER_AUTH_USER": "<svc>@<project>.serviceaccount.jetder.com",
+          "JETDER_TOKEN": "<your-jetder-api-token>"
+        }
+      }
+    }
+  }
+  ```
+
+- **VS Code** (`.vscode/mcp.json`) uses a `servers` key instead of `mcpServers`;
+  the `command`/`env` block is identical.
+
+Use the absolute path (e.g. `~/.local/bin/jetder-mcp`) for `command` if the bin
+dir is not on your client's `PATH`. Optional env for domain tools and defaults:
+`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `JETDER_DEFAULT_PROJECT`,
+`JETDER_DEFAULT_LOCATION` (see [Configuration](#configuration)).
+
+**4. Verify.** Ask the agent to run the **`check-setup`** tool — it reports
+whether your auth, project/location, Cloudflare config, and pull-secret are ready
+to deploy, with a remediation (and the owner contact) for anything missing.
+
+## Getting access
+
+jetder-mcp talks to a Jetder account you must be granted access to. To get a
+service-account email + API token (and a project to deploy into), contact the
+owner: **<https://thunder.in.th/>**. Set the token as `JETDER_TOKEN` (and the
+service-account email as `JETDER_AUTH_USER`) in your MCP client config above.
+
+## What's included
+
+- **62 tools** across Me, Location, Project, Deployment (read + deploy / pause /
+  resume / rollback), Domain / Route, Billing (read), Disk, ServiceAccount, Role,
+  Secret / PullSecret (values redacted), WorkloadIdentity, Organization, Email,
+  Cloudflare DNS + Registrar (buy a domain, with a registrant contact), and a
+  `check-setup` preflight doctor.
+- **3 guided prompts:** `deploy-an-app`, `bootstrap-pull-secret`, `point-a-domain`.
+
+Deferred for safety until an explicit opt-in: `role-bind` (replace-all role set =
+implicit revoke) and route `forwardAuth`. `*delete`, role revoke, and
+service-account key deletion are intentionally not exposed.
+
+The server reads JSON-RPC from stdin and writes to stdout, so it is launched by an
+MCP client rather than run interactively.
 
 ### Configuration
 
@@ -151,8 +193,12 @@ mcp/
   tools_resources_read.go    # billing/disk/sa/role/secret/pullsecret/wi/org reads
   tools_resources_write.go   # disk/secret/pullsecret/wi/sa/org/role create+update
   tools_grants_email.go      # role grant/bind, sa create-key, email send
-  tools_cloudflare.go        # cf-* tools (DNS + Registrar)
+  tools_cloudflare.go        # cf-* tools (DNS + Registrar, registrant contact)
+  tools_check_setup.go       # "check-setup" preflight doctor tool
   prompt_point_a_domain.go   # "point-a-domain" guided MCP prompt
+  prompt_deploy_wizards.go   # "deploy-an-app" + "bootstrap-pull-secret" prompts
+  install.sh                 # one-line installer (release binary + checksum verify)
+  .github/workflows/release.yml # tag v* -> cross-platform binaries + SHA256SUMS
   internal/jetder/
     client.go                # adapter: jetder basic auth, redaction, defaults
   internal/cloudflare/

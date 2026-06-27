@@ -31,7 +31,10 @@ func routedAdapter(t *testing.T, routes map[string]string, defProject, defLocati
 	t.Cleanup(srv.Close)
 
 	t.Setenv(jetder.EnvAuthUser, "ci@test.example")
-	t.Setenv(jetder.EnvToken, "tok")
+	// A distinctive token sentinel: the leak test asserts this exact string never
+	// appears in output. Avoid a value (like "tok") that is a substring of normal
+	// words (e.g. "token") and would false-positive.
+	t.Setenv(jetder.EnvToken, "ZZ-secret-tokenval-XYZ123")
 	t.Setenv(jetder.EnvEndpoint, srv.URL)
 	t.Setenv(jetder.EnvDefaultProject, defProject)
 	t.Setenv(jetder.EnvDefaultLocation, defLocation)
@@ -327,10 +330,34 @@ func TestCheckSetup_NoSecretLeak_OnAuthError(t *testing.T) {
 		blob.WriteString(c.Remediation)
 	}
 	s := blob.String()
-	for _, secret := range []string{"tok", "ci@test.example", "Basic ", "Y2k6dG9r" /* base64(ci:tok)-ish */} {
+	for _, secret := range []string{"ZZ-secret-tokenval-XYZ123", "ci@test.example", "Basic "} {
 		if strings.Contains(s, secret) {
 			t.Fatalf("output leaked %q: %s", secret, s)
 		}
+	}
+}
+
+// --- owner contact appears in auth-fail and project-missing remediation ------
+
+func TestCheckSetup_OwnerContact_OnAuthFail(t *testing.T) {
+	a := routedAdapter(t, map[string]string{
+		"me.get": `{"ok":false,"error":{"message":"api: user not found"}}`,
+	}, "proj", "loc")
+	out := runCheckSetup(t, a, nil, CheckSetupInput{})
+	c := mustCheck(t, out, "jetder-auth")
+	if !strings.Contains(c.Remediation, "https://thunder.in.th/") {
+		t.Fatalf("auth-fail remediation should point to the owner contact: %q", c.Remediation)
+	}
+}
+
+func TestCheckSetup_OwnerContact_OnMissingProject(t *testing.T) {
+	a := routedAdapter(t, map[string]string{
+		"me.get": `{"ok":true,"result":{"email":"me@test.example","kyc":true}}`,
+	}, "", "loc")
+	out := runCheckSetup(t, a, nil, CheckSetupInput{})
+	c := mustCheck(t, out, "project")
+	if !strings.Contains(c.Remediation, "https://thunder.in.th/") {
+		t.Fatalf("missing-project remediation should point to the owner contact: %q", c.Remediation)
 	}
 }
 

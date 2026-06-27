@@ -1,0 +1,79 @@
+name: release
+
+# Build cross-platform binaries on a version tag and attach them (plus a
+# SHA256SUMS file) to the GitHub Release. Asset names match install.sh:
+#   jetder-mcp_<os>_<arch>   (os: linux|darwin, arch: amd64|arm64)
+#   mcp-deploy_<os>_<arch>   (the CI deploy helper)
+#   SHA256SUMS
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write   # required to create/upload the GitHub Release
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [linux, darwin]
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: true
+
+      - name: Build binaries
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: '0'
+        run: |
+          set -eu
+          mkdir -p dist
+          # main server binary
+          go build -trimpath -ldflags="-s -w" \
+            -o "dist/jetder-mcp_${GOOS}_${GOARCH}" .
+          # CI deploy helper
+          go build -trimpath -ldflags="-s -w" \
+            -o "dist/mcp-deploy_${GOOS}_${GOARCH}" ./scripts/mcp-deploy
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.os }}-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          set -eu
+          cd dist
+          sha256sum jetder-mcp_* mcp-deploy_* > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Create / update the GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/jetder-mcp_*
+            dist/mcp-deploy_*
+            dist/SHA256SUMS
+          fail_on_unmatched_files: true
+          generate_release_notes: true

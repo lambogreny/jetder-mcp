@@ -37,6 +37,16 @@ const (
 	statusFail checkStatus = "fail"
 )
 
+// ownerContactURL is where a user requests Jetder access (a token / a project).
+// Surfaced when auth fails or no project is configured, so the user knows how to
+// get onboarded rather than being left stuck.
+const ownerContactURL = "https://thunder.in.th/"
+
+// contactOwner appends the owner-contact hint to a remediation string.
+func contactOwner(remediation string) string {
+	return remediation + " To get access (a Jetder token or a project), contact the owner: " + ownerContactURL
+}
+
 // SetupCheck is one line item in the doctor report.
 type SetupCheck struct {
 	Name        string      `json:"name" jsonschema:"the check identifier (e.g. jetder-auth, project-location)"`
@@ -86,7 +96,7 @@ func registerCheckSetup(server *mcp.Server, adapter *jetder.Adapter, cf *cloudfl
 				Name:        "jetder-auth",
 				Status:      statusFail,
 				Detail:      "Jetder auth check failed: " + adapter.Redact(err).Error(),
-				Remediation: "Verify JETDER_AUTH_USER (service-account email) and JETDER_TOKEN are correct and the account is active.",
+				Remediation: contactOwner("Verify JETDER_AUTH_USER (service-account email) and JETDER_TOKEN are correct and the account is active."),
 			})
 		} else {
 			authOK = true
@@ -116,7 +126,7 @@ func registerCheckSetup(server *mcp.Server, adapter *jetder.Adapter, cf *cloudfl
 				Name:        "project",
 				Status:      statusFail,
 				Detail:      "no project resolved",
-				Remediation: "Set JETDER_DEFAULT_PROJECT or pass a project argument.",
+				Remediation: contactOwner("Set JETDER_DEFAULT_PROJECT or pass a project argument."),
 			})
 		} else {
 			out.add(SetupCheck{Name: "project", Status: statusOK, Detail: "project=" + project})

@@ -50,10 +50,14 @@ Jetder uses **HTTP Basic auth**: a service-account email + an API token.
   `ai-dev@<project>.serviceaccount.jetder.com`.
 - `JETDER_TOKEN` — the API token (the "password").
 
-Get them from the Jetder console (Service Accounts → create/select → create key).
-The service account needs an **owner/deployer role** on your project. Note your
-**project sid** (e.g. `dev-lambogreny`) and a **location** (e.g. `cluster-1`; see
-the `location-list` tool).
+Don't have access yet? Request a token and a project from the owner:
+**<https://thunder.in.th/>**.
+
+Once you have access, get the credentials from the Jetder console (Service
+Accounts → create/select → create key). The service account needs an
+**owner/deployer role** on your project. Note your **project sid** (e.g.
+`dev-lambogreny`) and a **location** (e.g. `cluster-1`; see the `location-list`
+tool).
 
 ### Cloudflare (optional — only for DNS / buying domains)
 See **[docs/CLOUDFLARE-SETUP.md](./CLOUDFLARE-SETUP.md)** for the step-by-step. In
