@@ -77,98 +77,108 @@ const defaultPullSecretName = "ghcr-pull"
 
 // registerCheckSetup adds the "check-setup" doctor tool. cf may be nil (Cloudflare
 // not configured) — that is reported as a warning, not a failure.
+// buildSetupReport runs every preflight check and returns the structured report.
+// It is shared by the check-setup tool and the jetder://status resource so the two
+// can never drift. Every prerequisite failure is a structured check (never an
+// error), and credentials are redacted; note that the jetder-auth OK detail
+// includes the authenticated email, so callers that may expose the report to a
+// client (e.g. the resource) must render a MASKED view — see renderStatusMarkdown.
+func buildSetupReport(ctx context.Context, adapter *jetder.Adapter, cf *cloudflare.Client, in CheckSetupInput) CheckSetupOutput {
+	project := adapter.ResolveProject(in.Project)
+	location := adapter.ResolveLocation(in.Location)
+
+	out := CheckSetupOutput{
+		ResolvedContext: ResolvedContext{ResolvedProject: project, ResolvedLocation: location},
+	}
+
+	// 1. Jetder auth — call me.get (a safe GET). Note: the server cannot even
+	// start without JETDER_AUTH_USER/JETDER_TOKEN, so this validates that the
+	// configured credentials actually WORK after startup, not first-run setup.
+	authOK := false
+	kyc := false
+	if item, err := adapter.Client().Me().Get(ctx, nil); err != nil {
+		out.add(SetupCheck{
+			Name:        "jetder-auth",
+			Status:      statusFail,
+			Detail:      "Jetder auth check failed: " + adapter.Redact(err).Error(),
+			Remediation: contactOwner("Verify JETDER_AUTH_USER (service-account email) and JETDER_TOKEN are correct and the account is active."),
+		})
+	} else {
+		authOK = true
+		kyc = item.KYC
+		out.add(SetupCheck{
+			Name:   "jetder-auth",
+			Status: statusOK,
+			Detail: "authenticated as " + item.Email,
+		})
+		// 1b. KYC — informational. Some operations (e.g. billing/registrar)
+		// require a completed KYC; surface it as a warning, not a blocker.
+		if kyc {
+			out.add(SetupCheck{Name: "jetder-kyc", Status: statusOK, Detail: "KYC completed"})
+		} else {
+			out.add(SetupCheck{
+				Name:        "jetder-kyc",
+				Status:      statusWarn,
+				Detail:      "KYC not completed — some operations (billing, domain registration) may be unavailable.",
+				Remediation: "Complete KYC in the Jetder console if you need paid/registrar features.",
+			})
+		}
+	}
+
+	// 2. Project / location — both are required to deploy. Empty => fail.
+	if project == "" {
+		out.add(SetupCheck{
+			Name:        "project",
+			Status:      statusFail,
+			Detail:      "no project resolved",
+			Remediation: contactOwner("Set JETDER_DEFAULT_PROJECT or pass a project argument."),
+		})
+	} else {
+		out.add(SetupCheck{Name: "project", Status: statusOK, Detail: "project=" + project})
+	}
+	if location == "" {
+		out.add(SetupCheck{
+			Name:        "location",
+			Status:      statusFail,
+			Detail:      "no location resolved",
+			Remediation: "Set JETDER_DEFAULT_LOCATION or pass a location argument.",
+		})
+	} else {
+		out.add(SetupCheck{Name: "location", Status: statusOK, Detail: "location=" + location})
+	}
+
+	// 3. Cloudflare — config presence only (no live API call; lazy/optional).
+	switch {
+	case cf == nil:
+		out.add(SetupCheck{
+			Name:        "cloudflare",
+			Status:      statusWarn,
+			Detail:      "Cloudflare not configured — domain tools are unavailable.",
+			Remediation: fmt.Sprintf("Set %s (and %s for buying domains via Registrar) to enable domain tools.", cloudflare.EnvToken, cloudflare.EnvAccountID),
+		})
+	case strings.TrimSpace(cf.AccountID()) == "":
+		out.add(SetupCheck{
+			Name:        "cloudflare",
+			Status:      statusWarn,
+			Detail:      "Cloudflare token configured, but no account id — DNS/zone tools work; the Registrar (buy domain) is unavailable.",
+			Remediation: fmt.Sprintf("Set %s to enable domain registration.", cloudflare.EnvAccountID),
+		})
+	default:
+		out.add(SetupCheck{Name: "cloudflare", Status: statusOK, Detail: "Cloudflare configured (token + account id)"})
+	}
+
+	// 4. Pull-secret — only meaningful once auth works and a project/location
+	// is known. Needed for private-image deploys; absence is a warning (public
+	// images still deploy). The credential VALUE is never read or returned.
+	out.add(checkPullSecret(ctx, adapter, project, location, authOK, in.PullSecret))
+
+	out.finalize()
+	return out
+}
+
 func registerCheckSetup(server *mcp.Server, adapter *jetder.Adapter, cf *cloudflare.Client) {
 	handler := func(ctx context.Context, _ *mcp.CallToolRequest, in CheckSetupInput) (*mcp.CallToolResult, CheckSetupOutput, error) {
-		project := adapter.ResolveProject(in.Project)
-		location := adapter.ResolveLocation(in.Location)
-
-		out := CheckSetupOutput{
-			ResolvedContext: ResolvedContext{ResolvedProject: project, ResolvedLocation: location},
-		}
-
-		// 1. Jetder auth — call me.get (a safe GET). Note: the server cannot even
-		// start without JETDER_AUTH_USER/JETDER_TOKEN, so this validates that the
-		// configured credentials actually WORK after startup, not first-run setup.
-		authOK := false
-		kyc := false
-		if item, err := adapter.Client().Me().Get(ctx, nil); err != nil {
-			out.add(SetupCheck{
-				Name:        "jetder-auth",
-				Status:      statusFail,
-				Detail:      "Jetder auth check failed: " + adapter.Redact(err).Error(),
-				Remediation: contactOwner("Verify JETDER_AUTH_USER (service-account email) and JETDER_TOKEN are correct and the account is active."),
-			})
-		} else {
-			authOK = true
-			kyc = item.KYC
-			out.add(SetupCheck{
-				Name:   "jetder-auth",
-				Status: statusOK,
-				Detail: "authenticated as " + item.Email,
-			})
-			// 1b. KYC — informational. Some operations (e.g. billing/registrar)
-			// require a completed KYC; surface it as a warning, not a blocker.
-			if kyc {
-				out.add(SetupCheck{Name: "jetder-kyc", Status: statusOK, Detail: "KYC completed"})
-			} else {
-				out.add(SetupCheck{
-					Name:        "jetder-kyc",
-					Status:      statusWarn,
-					Detail:      "KYC not completed — some operations (billing, domain registration) may be unavailable.",
-					Remediation: "Complete KYC in the Jetder console if you need paid/registrar features.",
-				})
-			}
-		}
-
-		// 2. Project / location — both are required to deploy. Empty => fail.
-		if project == "" {
-			out.add(SetupCheck{
-				Name:        "project",
-				Status:      statusFail,
-				Detail:      "no project resolved",
-				Remediation: contactOwner("Set JETDER_DEFAULT_PROJECT or pass a project argument."),
-			})
-		} else {
-			out.add(SetupCheck{Name: "project", Status: statusOK, Detail: "project=" + project})
-		}
-		if location == "" {
-			out.add(SetupCheck{
-				Name:        "location",
-				Status:      statusFail,
-				Detail:      "no location resolved",
-				Remediation: "Set JETDER_DEFAULT_LOCATION or pass a location argument.",
-			})
-		} else {
-			out.add(SetupCheck{Name: "location", Status: statusOK, Detail: "location=" + location})
-		}
-
-		// 3. Cloudflare — config presence only (no live API call; lazy/optional).
-		switch {
-		case cf == nil:
-			out.add(SetupCheck{
-				Name:        "cloudflare",
-				Status:      statusWarn,
-				Detail:      "Cloudflare not configured — domain tools are unavailable.",
-				Remediation: fmt.Sprintf("Set %s (and %s for buying domains via Registrar) to enable domain tools.", cloudflare.EnvToken, cloudflare.EnvAccountID),
-			})
-		case strings.TrimSpace(cf.AccountID()) == "":
-			out.add(SetupCheck{
-				Name:        "cloudflare",
-				Status:      statusWarn,
-				Detail:      "Cloudflare token configured, but no account id — DNS/zone tools work; the Registrar (buy domain) is unavailable.",
-				Remediation: fmt.Sprintf("Set %s to enable domain registration.", cloudflare.EnvAccountID),
-			})
-		default:
-			out.add(SetupCheck{Name: "cloudflare", Status: statusOK, Detail: "Cloudflare configured (token + account id)"})
-		}
-
-		// 4. Pull-secret — only meaningful once auth works and a project/location
-		// is known. Needed for private-image deploys; absence is a warning (public
-		// images still deploy). The credential VALUE is never read or returned.
-		out.add(checkPullSecret(ctx, adapter, project, location, authOK, in.PullSecret))
-
-		out.finalize()
-
+		out := buildSetupReport(ctx, adapter, cf, in)
 		summary := fmt.Sprintf("ready=%t fail=%d warn=%d", out.OverallReady, out.Fails, out.Warns)
 		return textResult(summary), out, nil
 	}
