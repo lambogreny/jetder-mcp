@@ -79,16 +79,16 @@ func registerRouteCreateV2(server *mcp.Server, adapter *jetder.Adapter) {
 		domain := strings.TrimSpace(in.Domain)
 		target := strings.TrimSpace(in.Target)
 		if project == "" {
-			return nil, RouteActionOutput{}, fmt.Errorf("project required")
+			return nil, RouteActionOutput{}, errProjectRequired()
 		}
 		if location == "" {
-			return nil, RouteActionOutput{}, fmt.Errorf("location required")
+			return nil, RouteActionOutput{}, errLocationRequired()
 		}
 		if domain == "" {
-			return nil, RouteActionOutput{}, fmt.Errorf("domain required")
+			return nil, RouteActionOutput{}, errArgRequired("domain")
 		}
 		if target == "" {
-			return nil, RouteActionOutput{}, fmt.Errorf("target required")
+			return nil, RouteActionOutput{}, errArgRequired("target")
 		}
 
 		m := &api.RouteCreateV2{
@@ -143,13 +143,13 @@ func registerRouteGet(server *mcp.Server, adapter *jetder.Adapter) {
 		location := adapter.ResolveLocation(in.Location)
 		domain := strings.TrimSpace(in.Domain)
 		if project == "" {
-			return nil, RouteGetOutput{}, fmt.Errorf("project required")
+			return nil, RouteGetOutput{}, errProjectRequired()
 		}
 		if location == "" {
-			return nil, RouteGetOutput{}, fmt.Errorf("location required")
+			return nil, RouteGetOutput{}, errLocationRequired()
 		}
 		if domain == "" {
-			return nil, RouteGetOutput{}, fmt.Errorf("domain required")
+			return nil, RouteGetOutput{}, errArgRequired("domain")
 		}
 		res, err := adapter.Client().Route().Get(ctx, &api.RouteGet{
 			Project: project, Location: location, Domain: domain, Path: in.Path,
@@ -186,7 +186,7 @@ func registerRouteList(server *mcp.Server, adapter *jetder.Adapter) {
 	handler := func(ctx context.Context, _ *mcp.CallToolRequest, in RouteListInput) (*mcp.CallToolResult, RouteListOutput, error) {
 		project := adapter.ResolveProject(in.Project)
 		if project == "" {
-			return nil, RouteListOutput{}, fmt.Errorf("project required")
+			return nil, RouteListOutput{}, errProjectRequired()
 		}
 		location := adapter.ResolveLocation(in.Location)
 		res, err := adapter.Client().Route().List(ctx, &api.RouteList{Project: project, Location: location})

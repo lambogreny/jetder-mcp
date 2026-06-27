@@ -117,13 +117,13 @@ func registerDomainCreate(server *mcp.Server, adapter *jetder.Adapter) {
 		location := adapter.ResolveLocation(in.Location)
 		domain := strings.TrimSpace(in.Domain)
 		if project == "" {
-			return nil, DomainActionOutput{}, fmt.Errorf("project required")
+			return nil, DomainActionOutput{}, errProjectRequired()
 		}
 		if location == "" {
-			return nil, DomainActionOutput{}, fmt.Errorf("location required")
+			return nil, DomainActionOutput{}, errLocationRequired()
 		}
 		if domain == "" {
-			return nil, DomainActionOutput{}, fmt.Errorf("domain required")
+			return nil, DomainActionOutput{}, errArgRequired("domain")
 		}
 		_, err := adapter.Client().Domain().Create(ctx, &api.DomainCreate{
 			Project:  project,
@@ -168,10 +168,10 @@ func registerDomainGet(server *mcp.Server, adapter *jetder.Adapter) {
 		project := adapter.ResolveProject(in.Project)
 		domain := strings.TrimSpace(in.Domain)
 		if project == "" {
-			return nil, DomainGetOutput{}, fmt.Errorf("project required")
+			return nil, DomainGetOutput{}, errProjectRequired()
 		}
 		if domain == "" {
-			return nil, DomainGetOutput{}, fmt.Errorf("domain required")
+			return nil, DomainGetOutput{}, errArgRequired("domain")
 		}
 		res, err := adapter.Client().Domain().Get(ctx, &api.DomainGet{Project: project, Domain: domain})
 		if err != nil {
@@ -206,7 +206,7 @@ func registerDomainList(server *mcp.Server, adapter *jetder.Adapter) {
 	handler := func(ctx context.Context, _ *mcp.CallToolRequest, in DomainListInput) (*mcp.CallToolResult, DomainListOutput, error) {
 		project := adapter.ResolveProject(in.Project)
 		if project == "" {
-			return nil, DomainListOutput{}, fmt.Errorf("project required")
+			return nil, DomainListOutput{}, errProjectRequired()
 		}
 		location := adapter.ResolveLocation(in.Location)
 		res, err := adapter.Client().Domain().List(ctx, &api.DomainList{Project: project, Location: location})
@@ -243,10 +243,10 @@ func registerDomainPurgeCache(server *mcp.Server, adapter *jetder.Adapter) {
 		project := adapter.ResolveProject(in.Project)
 		domain := strings.TrimSpace(in.Domain)
 		if project == "" {
-			return nil, DomainActionOutput{}, fmt.Errorf("project required")
+			return nil, DomainActionOutput{}, errProjectRequired()
 		}
 		if domain == "" {
-			return nil, DomainActionOutput{}, fmt.Errorf("domain required")
+			return nil, DomainActionOutput{}, errArgRequired("domain")
 		}
 		_, err := adapter.Client().Domain().PurgeCache(ctx, &api.DomainPurgeCache{
 			Project: project,

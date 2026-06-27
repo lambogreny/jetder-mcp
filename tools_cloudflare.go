@@ -26,7 +26,7 @@ func registerCloudflareTools(server *mcp.Server, cf *cloudflare.Client) {
 
 // errCFNotConfigured is the user-facing message when CF env is missing.
 func errCFNotConfigured() error {
-	return fmt.Errorf("Cloudflare not configured: set %s (and %s for Registrar)", cloudflare.EnvToken, cloudflare.EnvAccountID)
+	return fmt.Errorf("Cloudflare not configured: set %s (and %s for Registrar) — see docs/CREDENTIALS.md", cloudflare.EnvToken, cloudflare.EnvAccountID)
 }
 
 // ===== read-only =====
@@ -168,7 +168,7 @@ func registerCFDNSList(server *mcp.Server, cf *cloudflare.Client) {
 			return nil, CFDNSListOutput{}, errCFNotConfigured()
 		}
 		if in.ZoneID == "" {
-			return nil, CFDNSListOutput{}, fmt.Errorf("zoneId required")
+			return nil, CFDNSListOutput{}, errArgRequired("zoneId")
 		}
 		res, err := cf.ListDNSRecords(ctx, in.ZoneID, in.Type, in.Name)
 		if err != nil {

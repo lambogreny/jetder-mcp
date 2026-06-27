@@ -106,7 +106,7 @@ func registerBillingRead(server *mcp.Server, adapter *jetder.Adapter) {
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in BillingProjectPriceInput) (*mcp.CallToolResult, BillingProjectPriceOutput, error) {
 		project := adapter.ResolveProject(in.Project)
 		if project == "" {
-			return nil, BillingProjectPriceOutput{}, fmt.Errorf("project required")
+			return nil, BillingProjectPriceOutput{}, errProjectRequired()
 		}
 		res, err := adapter.Client().Billing().Project(ctx, &api.BillingProject{Project: project})
 		if err != nil {
@@ -169,7 +169,7 @@ func registerDiskRead(server *mcp.Server, adapter *jetder.Adapter) {
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in DiskListInput) (*mcp.CallToolResult, DiskListOutput, error) {
 		project := adapter.ResolveProject(in.Project)
 		if project == "" {
-			return nil, DiskListOutput{}, fmt.Errorf("project required")
+			return nil, DiskListOutput{}, errProjectRequired()
 		}
 		location := adapter.ResolveLocation(in.Location)
 		res, err := adapter.Client().Disk().List(ctx, &api.DiskList{Project: project, Location: location})
@@ -245,7 +245,7 @@ func registerServiceAccountRead(server *mcp.Server, adapter *jetder.Adapter) {
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in SAListInput) (*mcp.CallToolResult, SAListOutput, error) {
 		project := adapter.ResolveProject(in.Project)
 		if project == "" {
-			return nil, SAListOutput{}, fmt.Errorf("project required")
+			return nil, SAListOutput{}, errProjectRequired()
 		}
 		res, err := adapter.Client().ServiceAccount().List(ctx, &api.ServiceAccountList{Project: project})
 		if err != nil {
@@ -268,10 +268,10 @@ func registerServiceAccountRead(server *mcp.Server, adapter *jetder.Adapter) {
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in SAGetInput) (*mcp.CallToolResult, SAGetOutput, error) {
 		project := adapter.ResolveProject(in.Project)
 		if project == "" {
-			return nil, SAGetOutput{}, fmt.Errorf("project required")
+			return nil, SAGetOutput{}, errProjectRequired()
 		}
 		if strings.TrimSpace(in.ID) == "" {
-			return nil, SAGetOutput{}, fmt.Errorf("id required")
+			return nil, SAGetOutput{}, errArgRequired("id")
 		}
 		res, err := adapter.Client().ServiceAccount().Get(ctx, &api.ServiceAccountGet{Project: project, ID: in.ID})
 		if err != nil {
@@ -335,7 +335,7 @@ func registerRoleRead(server *mcp.Server, adapter *jetder.Adapter) {
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in RoleProjectInput) (*mcp.CallToolResult, RoleListOutput, error) {
 		project := adapter.ResolveProject(in.Project)
 		if project == "" {
-			return nil, RoleListOutput{}, fmt.Errorf("project required")
+			return nil, RoleListOutput{}, errProjectRequired()
 		}
 		res, err := adapter.Client().Role().List(ctx, &api.RoleList{Project: project})
 		if err != nil {
@@ -358,10 +358,10 @@ func registerRoleRead(server *mcp.Server, adapter *jetder.Adapter) {
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in RoleGetInput) (*mcp.CallToolResult, RoleGetOutput, error) {
 		project := adapter.ResolveProject(in.Project)
 		if project == "" {
-			return nil, RoleGetOutput{}, fmt.Errorf("project required")
+			return nil, RoleGetOutput{}, errProjectRequired()
 		}
 		if strings.TrimSpace(in.Role) == "" {
-			return nil, RoleGetOutput{}, fmt.Errorf("role required")
+			return nil, RoleGetOutput{}, errArgRequired("role")
 		}
 		res, err := adapter.Client().Role().Get(ctx, &api.RoleGet{Project: project, Role: in.Role})
 		if err != nil {
@@ -381,7 +381,7 @@ func registerRoleRead(server *mcp.Server, adapter *jetder.Adapter) {
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in RoleProjectInput) (*mcp.CallToolResult, RoleUsersOutput, error) {
 		project := adapter.ResolveProject(in.Project)
 		if project == "" {
-			return nil, RoleUsersOutput{}, fmt.Errorf("project required")
+			return nil, RoleUsersOutput{}, errProjectRequired()
 		}
 		res, err := adapter.Client().Role().Users(ctx, &api.RoleUsers{Project: project})
 		if err != nil {
@@ -449,7 +449,7 @@ func registerSecretRead(server *mcp.Server, adapter *jetder.Adapter) {
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in SecretListInput) (*mcp.CallToolResult, SecretListOutput, error) {
 		project := adapter.ResolveProject(in.Project)
 		if project == "" {
-			return nil, SecretListOutput{}, fmt.Errorf("project required")
+			return nil, SecretListOutput{}, errProjectRequired()
 		}
 		res, err := adapter.Client().Secret().List(ctx, &api.SecretList{Project: project})
 		if err != nil {
@@ -472,10 +472,10 @@ func registerSecretRead(server *mcp.Server, adapter *jetder.Adapter) {
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in SecretGetInput) (*mcp.CallToolResult, SecretGetOutput, error) {
 		project := adapter.ResolveProject(in.Project)
 		if project == "" {
-			return nil, SecretGetOutput{}, fmt.Errorf("project required")
+			return nil, SecretGetOutput{}, errProjectRequired()
 		}
 		if strings.TrimSpace(in.Name) == "" {
-			return nil, SecretGetOutput{}, fmt.Errorf("name required")
+			return nil, SecretGetOutput{}, errArgRequired("name")
 		}
 		res, err := adapter.Client().Secret().Get(ctx, &api.SecretGet{Project: project, Name: in.Name})
 		if err != nil {
@@ -541,7 +541,7 @@ func registerPullSecretRead(server *mcp.Server, adapter *jetder.Adapter) {
 		project := adapter.ResolveProject(in.Project)
 		location := adapter.ResolveLocation(in.Location)
 		if project == "" {
-			return nil, PullSecretListOutput{}, fmt.Errorf("project required")
+			return nil, PullSecretListOutput{}, errProjectRequired()
 		}
 		res, err := adapter.Client().PullSecret().List(ctx, &api.PullSecretList{Project: project, Location: location})
 		if err != nil {
@@ -622,7 +622,7 @@ func registerWorkloadIdentityRead(server *mcp.Server, adapter *jetder.Adapter) {
 		project := adapter.ResolveProject(in.Project)
 		location := adapter.ResolveLocation(in.Location)
 		if project == "" {
-			return nil, WIListOutput{}, fmt.Errorf("project required")
+			return nil, WIListOutput{}, errProjectRequired()
 		}
 		res, err := adapter.Client().WorkloadIdentity().List(ctx, &api.WorkloadIdentityList{Project: project, Location: location})
 		if err != nil {
@@ -701,7 +701,7 @@ func registerOrganizationRead(server *mcp.Server, adapter *jetder.Adapter) {
 		Annotations: readOnly(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in OrgGetInput) (*mcp.CallToolResult, OrganizationItem, error) {
 		if strings.TrimSpace(in.ID) == "" {
-			return nil, OrganizationItem{}, fmt.Errorf("id required")
+			return nil, OrganizationItem{}, errArgRequired("id")
 		}
 		res, err := adapter.Client().Organization().Get(ctx, &api.OrganizationGet{ID: in.ID})
 		if err != nil {
@@ -716,7 +716,7 @@ func registerOrganizationRead(server *mcp.Server, adapter *jetder.Adapter) {
 		Annotations: readOnly(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in OrgGetInput) (*mcp.CallToolResult, OrgProjectsOutput, error) {
 		if strings.TrimSpace(in.ID) == "" {
-			return nil, OrgProjectsOutput{}, fmt.Errorf("id required")
+			return nil, OrgProjectsOutput{}, errArgRequired("id")
 		}
 		res, err := adapter.Client().Organization().Projects(ctx, &api.OrganizationProjects{ID: in.ID})
 		if err != nil {
@@ -736,7 +736,7 @@ func registerOrganizationRead(server *mcp.Server, adapter *jetder.Adapter) {
 func parseID(s string) (int64, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
-		return 0, fmt.Errorf("id required")
+		return 0, errArgRequired("id")
 	}
 	v, err := strconv.ParseInt(s, 10, 64)
 	if err != nil || v <= 0 {

@@ -45,13 +45,13 @@ func registerRoleGrant(server *mcp.Server, adapter *jetder.Adapter) {
 		role := strings.TrimSpace(in.Role)
 		email := strings.TrimSpace(in.Email)
 		if project == "" {
-			return nil, ResourceActionOutput{}, fmt.Errorf("project required")
+			return nil, ResourceActionOutput{}, errProjectRequired()
 		}
 		if role == "" {
-			return nil, ResourceActionOutput{}, fmt.Errorf("role required")
+			return nil, ResourceActionOutput{}, errArgRequired("role")
 		}
 		if email == "" {
-			return nil, ResourceActionOutput{}, fmt.Errorf("email required")
+			return nil, ResourceActionOutput{}, errArgRequired("email")
 		}
 		if _, err := adapter.Client().Role().Grant(ctx, &api.RoleGrant{Project: project, Role: role, Email: email}); err != nil {
 			return nil, ResourceActionOutput{}, adapter.Redact(err)
@@ -87,10 +87,10 @@ func registerServiceAccountCreateKey(server *mcp.Server, adapter *jetder.Adapter
 		project := adapter.ResolveProject(in.Project)
 		id := strings.TrimSpace(in.ID)
 		if project == "" {
-			return nil, ResourceActionOutput{}, fmt.Errorf("project required")
+			return nil, ResourceActionOutput{}, errProjectRequired()
 		}
 		if id == "" {
-			return nil, ResourceActionOutput{}, fmt.Errorf("id required")
+			return nil, ResourceActionOutput{}, errArgRequired("id")
 		}
 		if _, err := adapter.Client().ServiceAccount().CreateKey(ctx, &api.ServiceAccountCreateKey{Project: project, ID: id}); err != nil {
 			return nil, ResourceActionOutput{}, adapter.Redact(err)
@@ -140,7 +140,7 @@ func registerEmailSend(server *mcp.Server, adapter *jetder.Adapter) {
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in EmailSendInput) (*mcp.CallToolResult, EmailSendOutput, error) {
 		project := adapter.ResolveProject(in.Project)
 		if project == "" {
-			return nil, EmailSendOutput{}, fmt.Errorf("project required")
+			return nil, EmailSendOutput{}, errProjectRequired()
 		}
 		if strings.TrimSpace(in.From.Email) == "" {
 			return nil, EmailSendOutput{}, fmt.Errorf("from.email required")

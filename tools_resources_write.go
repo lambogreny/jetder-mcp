@@ -108,10 +108,10 @@ func registerSecretCreate(server *mcp.Server, adapter *jetder.Adapter) {
 		project := adapter.ResolveProject(in.Project)
 		name := strings.TrimSpace(in.Name)
 		if project == "" {
-			return nil, ResourceActionOutput{}, fmt.Errorf("project required")
+			return nil, ResourceActionOutput{}, errProjectRequired()
 		}
 		if name == "" {
-			return nil, ResourceActionOutput{}, fmt.Errorf("name required")
+			return nil, ResourceActionOutput{}, errArgRequired("name")
 		}
 		if in.Value == "" {
 			return nil, ResourceActionOutput{}, fmt.Errorf("value required")
@@ -230,7 +230,7 @@ func registerServiceAccountWrite(server *mcp.Server, adapter *jetder.Adapter) {
 		project := adapter.ResolveProject(in.Project)
 		sid := strings.TrimSpace(in.SID)
 		if project == "" {
-			return nil, ResourceActionOutput{}, fmt.Errorf("project required")
+			return nil, ResourceActionOutput{}, errProjectRequired()
 		}
 		if sid == "" {
 			return nil, ResourceActionOutput{}, fmt.Errorf("sid required")
@@ -251,7 +251,7 @@ func registerServiceAccountWrite(server *mcp.Server, adapter *jetder.Adapter) {
 		project := adapter.ResolveProject(in.Project)
 		sid := strings.TrimSpace(in.SID)
 		if project == "" {
-			return nil, ResourceActionOutput{}, fmt.Errorf("project required")
+			return nil, ResourceActionOutput{}, errProjectRequired()
 		}
 		if sid == "" {
 			return nil, ResourceActionOutput{}, fmt.Errorf("sid required")
@@ -283,7 +283,7 @@ func registerOrganizationWrite(server *mcp.Server, adapter *jetder.Adapter) {
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in OrgCreateInput) (*mcp.CallToolResult, ResourceActionOutput, error) {
 		id := strings.TrimSpace(in.ID)
 		if id == "" {
-			return nil, ResourceActionOutput{}, fmt.Errorf("id required")
+			return nil, ResourceActionOutput{}, errArgRequired("id")
 		}
 		if _, err := adapter.Client().Organization().Create(ctx, &api.OrganizationCreate{ID: id, Name: in.Name}); err != nil {
 			return nil, ResourceActionOutput{}, adapter.Redact(err)
@@ -298,7 +298,7 @@ func registerOrganizationWrite(server *mcp.Server, adapter *jetder.Adapter) {
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in OrgCreateInput) (*mcp.CallToolResult, ResourceActionOutput, error) {
 		id := strings.TrimSpace(in.ID)
 		if id == "" {
-			return nil, ResourceActionOutput{}, fmt.Errorf("id required")
+			return nil, ResourceActionOutput{}, errArgRequired("id")
 		}
 		if _, err := adapter.Client().Organization().Update(ctx, &api.OrganizationUpdate{ID: id, Name: in.Name}); err != nil {
 			return nil, ResourceActionOutput{}, adapter.Redact(err)
@@ -325,10 +325,10 @@ func registerRoleCreate(server *mcp.Server, adapter *jetder.Adapter) {
 		project := adapter.ResolveProject(in.Project)
 		role := strings.TrimSpace(in.Role)
 		if project == "" {
-			return nil, ResourceActionOutput{}, fmt.Errorf("project required")
+			return nil, ResourceActionOutput{}, errProjectRequired()
 		}
 		if role == "" {
-			return nil, ResourceActionOutput{}, fmt.Errorf("role required")
+			return nil, ResourceActionOutput{}, errArgRequired("role")
 		}
 		if _, err := adapter.Client().Role().Create(ctx, &api.RoleCreate{
 			Project: project, Role: role, Name: in.Name, Permissions: in.Permissions,

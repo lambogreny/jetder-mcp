@@ -73,7 +73,7 @@ func registerDeploymentList(server *mcp.Server, adapter *jetder.Adapter) {
 	handler := func(ctx context.Context, _ *mcp.CallToolRequest, in DeploymentListInput) (*mcp.CallToolResult, DeploymentListOutput, error) {
 		project := adapter.ResolveProject(in.Project)
 		if project == "" {
-			return nil, DeploymentListOutput{}, fmt.Errorf("project required")
+			return nil, DeploymentListOutput{}, errProjectRequired()
 		}
 		location := adapter.ResolveLocation(in.Location)
 		res, err := adapter.Client().Deployment().List(ctx, &api.DeploymentList{
@@ -266,13 +266,13 @@ func resolveDeploymentTarget(adapter *jetder.Adapter, project, location, name st
 	l := adapter.ResolveLocation(location)
 	n := strings.TrimSpace(name)
 	if p == "" {
-		return "", "", "", fmt.Errorf("project required")
+		return "", "", "", errProjectRequired()
 	}
 	if l == "" {
-		return "", "", "", fmt.Errorf("location required")
+		return "", "", "", errLocationRequired()
 	}
 	if n == "" {
-		return "", "", "", fmt.Errorf("name required")
+		return "", "", "", errArgRequired("name")
 	}
 	return p, l, n, nil
 }

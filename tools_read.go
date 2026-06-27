@@ -167,7 +167,7 @@ func registerProjectGet(server *mcp.Server, adapter *jetder.Adapter) {
 	handler := func(ctx context.Context, _ *mcp.CallToolRequest, in ProjectGetInput) (*mcp.CallToolResult, ProjectGetOutput, error) {
 		project := adapter.ResolveProject(in.Project)
 		if project == "" {
-			return nil, ProjectGetOutput{}, fmt.Errorf("project required")
+			return nil, ProjectGetOutput{}, errProjectRequired()
 		}
 		res, err := adapter.Client().Project().Get(ctx, &api.ProjectGet{Project: project})
 		if err != nil {
@@ -201,7 +201,7 @@ func registerProjectUsage(server *mcp.Server, adapter *jetder.Adapter) {
 	handler := func(ctx context.Context, _ *mcp.CallToolRequest, in ProjectGetInput) (*mcp.CallToolResult, ProjectUsageOutput, error) {
 		project := adapter.ResolveProject(in.Project)
 		if project == "" {
-			return nil, ProjectUsageOutput{}, fmt.Errorf("project required")
+			return nil, ProjectUsageOutput{}, errProjectRequired()
 		}
 		res, err := adapter.Client().Project().Usage(ctx, &api.ProjectUsage{Project: project})
 		if err != nil {
@@ -235,4 +235,29 @@ func textResult(s string) *mcp.CallToolResult {
 // readOnly returns annotations marking a tool as non-mutating.
 func readOnly() *mcp.ToolAnnotations {
 	return &mcp.ToolAnnotations{ReadOnlyHint: true}
+}
+
+// Actionable "required" errors. These replace terse literals like
+// errProjectRequired() with a short remediation (which env var / argument
+// to provide), so a user who hits them during setup knows the fix. The text is
+// static — it never embeds a user-supplied value.
+
+// errProjectRequired is returned when no project resolves (arg empty + no default).
+// It also points to the owner contact, since a missing project is often an access
+// issue (you need a project granted to you).
+func errProjectRequired() error {
+	return fmt.Errorf("project required: pass the project argument or set %s. No access yet? Contact the owner: %s",
+		jetder.EnvDefaultProject, ownerContactURL)
+}
+
+// errLocationRequired is returned when no location resolves. This is config, not an
+// access issue, so it does not include the owner contact.
+func errLocationRequired() error {
+	return fmt.Errorf("location required: pass the location argument or set %s", jetder.EnvDefaultLocation)
+}
+
+// errArgRequired builds a consistent message for a missing simple argument, naming
+// the exact argument the caller must provide.
+func errArgRequired(name string) error {
+	return fmt.Errorf("%s required: pass the %q argument", name, name)
 }
