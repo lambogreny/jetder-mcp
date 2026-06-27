@@ -4,9 +4,9 @@ An [MCP](https://modelcontextprotocol.io) (Model Context Protocol) server that
 exposes the [Jetder](https://jetder.com) API as MCP tools and resources, served
 over **stdio**.
 
-> **Status:** in progress. Read-only tools for Me, Location, Project, and
-> Deployment plus Deployment actions (deploy/pause/resume/rollback) are
-> implemented. Domain/Route and other resources follow in subsequent slices.
+> **Status:** in progress. Tools for Me, Location, Project, Deployment
+> (read + deploy/pause/resume/rollback), and Domain/Route (custom domains and
+> routing) are implemented. Other resources follow in subsequent slices.
 
 ## Requirements
 
@@ -58,6 +58,10 @@ override the env defaults. Each tool reports the resolved context in its result.
 | `deployment-get`       | Get a deployment (latest or a specific revision).                |
 | `deployment-revisions` | List revision history for a deployment.                          |
 | `deployment-metrics`   | Time-series metrics (cpu, memory, requests, egress).             |
+| `domain-get`           | Get a domain with the DNS records needed to point it.            |
+| `domain-list`          | List custom domains in a project.                                |
+| `route-get`            | Get a single route by domain (and optional path).               |
+| `route-list`           | List routes in a project.                                        |
 
 ### State-changing (`readOnlyHint: false`)
 
@@ -67,8 +71,22 @@ override the env defaults. Each tool reports the resolved context in its result.
 | `deployment-pause`    | Pause a deployment (stops serving until resumed).    | `destructiveHint:true` |
 | `deployment-resume`   | Resume a paused deployment (restorative).            | `destructiveHint:false`|
 | `deployment-rollback` | Roll a deployment back to a previous revision.       | `destructiveHint:true` |
+| `domain-create`       | Add a custom domain to a project.                    | `destructiveHint:false`|
+| `domain-purge-cache`  | Purge the CDN cache for a domain (no resource delete).| `destructiveHint:true` |
+| `route-create-v2`     | Map a domain/path to a target (deployment://, etc.). | `destructiveHint:false`|
 
-> `deployment-delete` is intentionally not exposed.
+> `deployment-delete`, `domain-delete`, and `route-delete` are intentionally not
+> exposed. Route V1 create is superseded by `route-create-v2`.
+
+### Pointing a custom domain ("ชี้โดเมน")
+
+1. `domain-create` — add the domain to the project.
+2. `domain-get` — returns `ownershipRecord` (TXT to prove ownership), `sslRecords`
+   (TXT/DCV to issue the certificate), and `pointTo` (the A/AAAA/CNAME records to
+   set at your DNS provider). Set these records, then poll `domain-get` until
+   `status` is `success`.
+3. `route-create-v2` — route the domain to a deployment, e.g.
+   `target: "deployment://my-service"`.
 
 ## Development notes
 
@@ -92,6 +110,8 @@ mcp/
   tools_read.go              # location-*, project-* read tools
   tools_deployment_read.go   # deployment-* read tools
   tools_deployment_action.go # deployment deploy/pause/resume/rollback
+  tools_domain.go            # domain create/get/list/purge-cache
+  tools_route.go             # route create-v2/get/list
   internal/jetder/
     client.go                # adapter: client construction, bearer auth, redaction, defaults
   go.mod
