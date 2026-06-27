@@ -75,6 +75,7 @@ func buildServer(adapter *jetder.Adapter, cf *cloudflare.Client) *mcp.Server {
 	registerGrantsAndEmailTools(server, adapter)
 	registerCloudflareTools(server, cf)
 	registerPointADomainPrompt(server)
+	registerDeployWizardPrompts(server)
 
 	return server
 }

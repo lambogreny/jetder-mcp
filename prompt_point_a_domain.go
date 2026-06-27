@@ -22,11 +22,12 @@ var (
 // validateArg trims and validates a prompt argument against pat. Empty input is
 // allowed only when required is false (returns ""). On any control char/quote or
 // pattern mismatch it errors — never lets unvalidated text reach the playbook.
-func validateArg(field, v string, required bool, pat *regexp.Regexp) (string, error) {
+// prompt is the prompt name, used only for a clear error message.
+func validateArg(prompt, field, v string, required bool, pat *regexp.Regexp) (string, error) {
 	v = strings.TrimSpace(v)
 	if v == "" {
 		if required {
-			return "", fmt.Errorf("point-a-domain requires the %q argument", field)
+			return "", fmt.Errorf("%s requires the %q argument", prompt, field)
 		}
 		return "", nil
 	}
@@ -64,26 +65,27 @@ func pointADomainHandler(_ context.Context, req *mcp.GetPromptRequest) (*mcp.Get
 		args = req.Params.Arguments
 	}
 
-	domain, err := validateArg("domain", args["domain"], true, reDomain)
+	const pn = "point-a-domain"
+	domain, err := validateArg(pn, "domain", args["domain"], true, reDomain)
 	if err != nil {
 		return nil, err
 	}
 	// Canonicalize to lowercase so confirmText ("REGISTER <domain>") matches the
 	// registrar guard, which lowercases the domain before comparing.
 	domain = strings.ToLower(domain)
-	deployment, err := validateArg("deployment", args["deployment"], true, reName)
+	deployment, err := validateArg(pn, "deployment", args["deployment"], true, reName)
 	if err != nil {
 		return nil, err
 	}
-	project, err := validateArg("project", args["project"], false, reName)
+	project, err := validateArg(pn, "project", args["project"], false, reName)
 	if err != nil {
 		return nil, err
 	}
-	location, err := validateArg("location", args["location"], false, reName)
+	location, err := validateArg(pn, "location", args["location"], false, reName)
 	if err != nil {
 		return nil, err
 	}
-	path, err := validateArg("path", args["path"], false, rePathSafe)
+	path, err := validateArg(pn, "path", args["path"], false, rePathSafe)
 	if err != nil {
 		return nil, err
 	}
