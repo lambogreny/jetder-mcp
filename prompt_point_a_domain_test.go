@@ -225,3 +225,97 @@ func TestPrompt_MissingArgs(t *testing.T) {
 		t.Fatal("expected error for missing 'deployment'")
 	}
 }
+
+// renderPointADomain returns the rendered prompt text for the given args.
+func renderPointADomain(t *testing.T, args map[string]string) string {
+	t.Helper()
+	cs := connectWithCF(t, cfOK(`{"success":true,"result":[]}`))
+	gp, err := cs.GetPrompt(context.Background(), &mcp.GetPromptParams{Name: "point-a-domain", Arguments: args})
+	if err != nil {
+		t.Fatalf("GetPrompt: %v", err)
+	}
+	return gp.Messages[0].Content.(*mcp.TextContent).Text
+}
+
+// When registerDomain=true, the playbook guides the assistant to obtain a
+// registrant contact (no dashboard punt), pass it via the tool/env, and only set
+// acceptRegistrantAccuracy after the user confirms — without PII placeholders.
+func TestPrompt_Registrant_Guidance(t *testing.T) {
+	text := renderPointADomain(t, map[string]string{
+		"domain": "example.com", "deployment": "web", "registerDomain": "true",
+	})
+	for _, want := range []string{
+		"REGISTRANT CONTACT",
+		"CLOUDFLARE_REGISTRANT_",          // env reuse path
+		"registrant`",                     // pass via the cf-domain-register `registrant` arg
+		"acceptRegistrantAccuracy=true",   // money/legal ack
+		"legally binding",                 // legal warning
+		"SUSPENDED",                       // suspension consequence
+		"do NOT paste it back",            // PII boundary
+		"countryCode",                     // field names listed
+		"+<countryCode>.<number>",         // phone format hint, not a real number
+		"cannot inspect your environment", // prompt must not claim to read env
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("registrant guidance missing %q:\n%s", want, text)
+		}
+	}
+	// Must explicitly tell the assistant NOT to punt to the dashboard.
+	if !strings.Contains(text, "NOT send them to the Cloudflare dashboard") {
+		t.Fatalf("must explicitly avoid dashboard punt:\n%s", text)
+	}
+}
+
+// No fake PII placeholders that an assistant might copy verbatim.
+func TestPrompt_Registrant_NoFakePII(t *testing.T) {
+	text := renderPointADomain(t, map[string]string{
+		"domain": "example.com", "deployment": "web", "registerDomain": "true",
+	})
+	for _, bad := range []string{"John Doe", "Jane Doe", "Ada Lovelace", "+1.5555", "1 Main St", "@gmail.com", "@example.com\""} {
+		if strings.Contains(text, bad) {
+			t.Fatalf("prompt contains a PII-like placeholder %q (paste-bait):\n%s", bad, text)
+		}
+	}
+}
+
+// The registrant guidance only appears when actually registering.
+func TestPrompt_Registrant_AbsentWhenNotRegistering(t *testing.T) {
+	text := renderPointADomain(t, map[string]string{
+		"domain": "example.com", "deployment": "web", // registerDomain unset → false
+	})
+	if strings.Contains(text, "REGISTRANT CONTACT") || strings.Contains(text, "acceptRegistrantAccuracy") {
+		t.Fatalf("registrant block must not appear when not registering:\n%s", text)
+	}
+}
+
+// Price approval (STOP) must still precede the register call.
+func TestPrompt_Registrant_PriceApprovalStillFirst(t *testing.T) {
+	text := renderPointADomain(t, map[string]string{
+		"domain": "example.com", "deployment": "web", "registerDomain": "true",
+	})
+	stop := strings.Index(text, "ask them to approve the purchase")
+	reg := strings.Index(text, "call cf-domain-register")
+	if stop < 0 || reg < 0 || stop > reg {
+		t.Fatalf("price-approval STOP must precede cf-domain-register (stop=%d reg=%d):\n%s", stop, reg, text)
+	}
+}
+
+// No new PII prompt arguments were added for the contact.
+func TestPrompt_Registrant_NoNewPromptArgs(t *testing.T) {
+	cs := connectWithCF(t, cfOK(`{"success":true,"result":[]}`))
+	lp, err := cs.ListPrompts(context.Background(), &mcp.ListPromptsParams{})
+	if err != nil {
+		t.Fatalf("ListPrompts: %v", err)
+	}
+	for _, p := range lp.Prompts {
+		if p.Name != "point-a-domain" {
+			continue
+		}
+		for _, a := range p.Arguments {
+			switch strings.ToLower(a.Name) {
+			case "registrant", "name", "email", "phone", "street", "city", "state", "postalcode", "countrycode":
+				t.Fatalf("point-a-domain must not expose a PII prompt arg %q", a.Name)
+			}
+		}
+	}
+}

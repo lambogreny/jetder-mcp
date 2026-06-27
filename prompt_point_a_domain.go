@@ -128,9 +128,31 @@ func pointADomainHandler(_ context.Context, req *mcp.GetPromptRequest) (*mcp.Get
 		fmt.Fprintf(&b, "   a. Call cf-domain-check with domains=[%q] to get live availability + price.\n", domain)
 		b.WriteString("   b. STOP. Show the user the exact domain, price, and currency, and ask them to approve the purchase.\n")
 		b.WriteString("      Do NOT buy without explicit user approval.\n")
-		fmt.Fprintf(&b, "   c. Only after approval, call cf-domain-register with: domain=%q, confirmText=%q,\n", domain, "REGISTER "+domain)
-		b.WriteString("      maxRegistrationCost and currency matching the quote, acceptNonRefundable=true.\n")
-		b.WriteString("   d. If it returns a non-completed state, poll cf-registration-status until completed; stop on failed/action_required/blocked.\n\n")
+		// Registrant contact: registration needs a legal owner (WHOIS) contact. Guide
+		// the assistant to obtain it WITHOUT punting the user to a dashboard and
+		// WITHOUT placing PII in this prompt — the contact goes only to the
+		// cf-domain-register tool args or the CLOUDFLARE_REGISTRANT_* env.
+		b.WriteString("   c. REGISTRANT CONTACT (the legal domain owner's WHOIS details). Cloudflare requires this to\n")
+		b.WriteString("      register. This server cannot inspect your environment, so ASK the user which applies — do\n")
+		b.WriteString("      NOT send them to the Cloudflare dashboard:\n")
+		b.WriteString("      - If the user CONFIRMS they have already set the CLOUDFLARE_REGISTRANT_* environment\n")
+		b.WriteString("        variables (name, email, phone, street, city, state, postalCode, countryCode) correctly,\n")
+		b.WriteString("        register WITHOUT a registrant argument (the env contact is used automatically).\n")
+		b.WriteString("      - Otherwise, ask the user for: full legal name, email, phone (E.164 with a dot, e.g.\n")
+		b.WriteString("        +<countryCode>.<number>), street, city, state, postalCode, and countryCode (ISO 3166-1\n")
+		b.WriteString("        alpha-2); organization is optional. Pass these as the cf-domain-register `registrant`\n")
+		b.WriteString("        argument. Provide the contact ONLY through the tool argument (or the user's own\n")
+		b.WriteString("        CLOUDFLARE_REGISTRANT_* env) — do NOT paste it back into the chat or store it in shared\n")
+		b.WriteString("        config; it goes to the domain registry. To avoid re-asking next time, the user can set\n")
+		b.WriteString("        the CLOUDFLARE_REGISTRANT_* env once.\n")
+		b.WriteString("   d. CONFIRM ACCURACY. Registrant data is legally binding — inaccurate WHOIS details can get the\n")
+		b.WriteString("      domain SUSPENDED. Ask the user to confirm the contact is accurate and current. Only AFTER\n")
+		b.WriteString("      that confirmation, set acceptRegistrantAccuracy=true. Never set it just because the env is\n")
+		b.WriteString("      populated.\n")
+		fmt.Fprintf(&b, "   e. Only after approval (price) and accuracy confirmation, call cf-domain-register with: domain=%q,\n", domain)
+		fmt.Fprintf(&b, "      confirmText=%q, maxRegistrationCost and currency matching the quote, acceptNonRefundable=true,\n", "REGISTER "+domain)
+		b.WriteString("      acceptRegistrantAccuracy=true, and the registrant argument (unless using the env contact).\n")
+		b.WriteString("   f. If it returns a non-completed state, poll cf-registration-status until completed; stop on failed/action_required/blocked.\n\n")
 		step++
 	}
 
