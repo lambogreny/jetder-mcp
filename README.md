@@ -62,6 +62,16 @@ override the env defaults. Each tool reports the resolved context in its result.
 | `domain-list`          | List custom domains in a project.                                |
 | `route-get`            | Get a single route by domain (and optional path).               |
 | `route-list`           | List routes in a project.                                        |
+| `billing-list`         | List billing accounts.                                           |
+| `billing-get`          | Get a billing account by id.                                     |
+| `billing-project-price`| Get the current accrued price for a project.                    |
+| `disk-list` / `disk-get`             | List / get disks.                                  |
+| `service-account-list` / `-get`      | List / get service accounts (key metadata only).   |
+| `role-list` / `-get` / `-users` / `-permissions` | Roles, role members, assignable perms. |
+| `secret-list` / `secret-get`         | Secret **metadata only** — values are never returned. |
+| `pull-secret-list` / `-get`          | Pull-secret **metadata only** — values never returned. |
+| `workload-identity-list` / `-get`    | List / get workload identities.                    |
+| `organization-list` / `-get` / `-projects` | Organizations and their projects.            |
 
 ### State-changing (`readOnlyHint: false`)
 
@@ -112,6 +122,7 @@ mcp/
   tools_deployment_action.go # deployment deploy/pause/resume/rollback
   tools_domain.go            # domain create/get/list/purge-cache
   tools_route.go             # route create-v2/get/list
+  tools_resources_read.go    # billing/disk/sa/role/secret/pullsecret/wi/org reads
   internal/jetder/
     client.go                # adapter: client construction, bearer auth, redaction, defaults
   go.mod
