@@ -185,6 +185,61 @@ func TestDeploy_MissingRequiredFlag(t *testing.T) {
 	}
 }
 
+func TestServerArgv(t *testing.T) {
+	// -server-command split into argv (no shell), overrides -server.
+	c := config{server: "./jetder-mcp", serverCmd: "go run mod@v1 -x"}
+	argv, err := c.serverArgv()
+	if err != nil {
+		t.Fatalf("serverArgv: %v", err)
+	}
+	want := []string{"go", "run", "mod@v1", "-x"}
+	if len(argv) != len(want) {
+		t.Fatalf("argv=%v want %v", argv, want)
+	}
+	for i := range want {
+		if argv[i] != want[i] {
+			t.Fatalf("argv[%d]=%q want %q", i, argv[i], want[i])
+		}
+	}
+
+	// falls back to -server binary path when no command.
+	c2 := config{server: "./jetder-mcp"}
+	argv2, err := c2.serverArgv()
+	if err != nil || len(argv2) != 1 || argv2[0] != "./jetder-mcp" {
+		t.Fatalf("server path argv=%v err=%v", argv2, err)
+	}
+
+	// neither set → error.
+	if _, err := (config{}).serverArgv(); err == nil {
+		t.Fatal("expected error when neither -server nor -server-command set")
+	}
+}
+
+// TestDeploy_ServerCommand_Success: launch the real server via -server-command
+// (a multi-arg command) instead of -server, against a fake jetder endpoint.
+func TestDeploy_ServerCommand_Success(t *testing.T) {
+	server, helper := buildBinaries(t)
+	fake := fakeJetder(t, `{"ok":true,"result":{}}`)
+
+	// Use a 2-token command ("<server> -- ") to exercise argv splitting; the
+	// server ignores unknown trailing args. (Server takes no flags, so keep it
+	// to just the path here — splitting is unit-tested separately.)
+	cmd := exec.Command(helper,
+		"-server-command", server,
+		"-project", "p1", "-location", "l1", "-name", "web",
+		"-image", "ghcr.io/lambogreny/app:sha")
+	cmd.Env = append(os.Environ(),
+		"JETDER_TOKEN=tok", "JETDER_ENDPOINT="+fake.URL,
+		"JETDER_DEFAULT_PROJECT=", "JETDER_DEFAULT_LOCATION=")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("-server-command deploy should succeed, err=%v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "deploy accepted") {
+		t.Fatalf("expected success, got:\n%s", out)
+	}
+}
+
 func TestDeploy_MissingToken(t *testing.T) {
 	server, helper := buildBinaries(t)
 	cmd := exec.Command(helper,

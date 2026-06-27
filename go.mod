@@ -3,7 +3,7 @@ module github.com/lambogreny/jetder-mcp
 go 1.23.0
 
 require (
-	github.com/jetder-core/api v0.0.0-00010101000000-000000000000
+	github.com/jetder-core/api v0.0.0-20251222122510-e4c734d325f7
 	github.com/modelcontextprotocol/go-sdk v1.2.0
 )
 
@@ -17,7 +17,7 @@ require (
 	golang.org/x/oauth2 v0.30.0 // indirect
 )
 
-// Local development: the jetder-core/api repo has no published tags yet and is
-// private, so we point at the parent module on disk. Replace with a pinned
-// remote version (and set GOPRIVATE=github.com/jetder-core/*) once it tags.
-replace github.com/jetder-core/api => ../
+// github.com/jetder-core/api is public and pinned to a pseudo-version above, so
+// no `replace` is needed and external `go run` / module fetch works without auth.
+// For local development AGAINST uncommitted jetder-core/api changes, temporarily
+// add `replace github.com/jetder-core/api => ../` — but do NOT commit it.

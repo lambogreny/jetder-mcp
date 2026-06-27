@@ -15,9 +15,16 @@
 //
 // Usage:
 //
+//	# prebuilt server binary:
 //	mcp-deploy -server ./jetder-mcp -project P -location L -name N -image IMG [-branch B]
 //
-// project/location/name/image are required and explicit (no hidden env defaults).
+//	# launch the server via a command (e.g. from CI with `go run`):
+//	mcp-deploy -server-command "go run github.com/lambogreny/jetder-mcp@v1" \
+//	  -project P -location L -name N -image IMG
+//
+// -server-command is split into argv on whitespace and exec'd directly (no shell,
+// so no command injection). project/location/name/image are required and explicit
+// (no hidden env defaults).
 package main
 
 import (
@@ -44,14 +51,32 @@ func main() {
 }
 
 type config struct {
-	server   string
-	project  string
-	location string
-	name     string
-	image    string
-	branch   string
-	timeout  time.Duration
-	token    string // from JETDER_TOKEN; used for sanitization, never printed
+	server    string // path to a prebuilt server binary (compat)
+	serverCmd string // full command to launch the server, e.g. "go run <module>@<ver>"
+	project   string
+	location  string
+	name      string
+	image     string
+	branch    string
+	timeout   time.Duration
+	token     string // from JETDER_TOKEN; used for sanitization, never printed
+}
+
+// serverArgv returns the command + args used to launch the MCP server. If
+// -server-command is set it is split on whitespace into argv (NO shell, so no
+// injection); otherwise the -server binary path is used as a single argv.
+func (c config) serverArgv() ([]string, error) {
+	if strings.TrimSpace(c.serverCmd) != "" {
+		argv := strings.Fields(c.serverCmd)
+		if len(argv) == 0 {
+			return nil, errors.New("-server-command is empty")
+		}
+		return argv, nil
+	}
+	if strings.TrimSpace(c.server) == "" {
+		return nil, errors.New("either -server or -server-command is required")
+	}
+	return []string{c.server}, nil
 }
 
 // sanitize removes the bearer token from any text the helper is about to surface
@@ -66,7 +91,8 @@ func (c config) sanitize(s string) string {
 
 func parseFlags() (config, error) {
 	var c config
-	flag.StringVar(&c.server, "server", "./jetder-mcp", "path to the jetder-mcp server binary")
+	flag.StringVar(&c.server, "server", "./jetder-mcp", "path to a prebuilt jetder-mcp server binary")
+	flag.StringVar(&c.serverCmd, "server-command", "", "command to launch the server (argv, split on spaces, no shell), e.g. \"go run github.com/lambogreny/jetder-mcp@v1\"; overrides -server")
 	flag.StringVar(&c.project, "project", "", "jetder project sid (required)")
 	flag.StringVar(&c.location, "location", "", "jetder location id (required)")
 	flag.StringVar(&c.name, "name", "", "deployment name (required)")
@@ -110,7 +136,11 @@ func run() error {
 
 	// Launch the server as a subprocess. It inherits our env (incl JETDER_TOKEN);
 	// capture its stderr so we can surface a sanitized summary on failure only.
-	cmd := exec.Command(c.server)
+	argv, err := c.serverArgv()
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command(argv[0], argv[1:]...) // argv, never `sh -c` (no injection)
 	cmd.Env = os.Environ()
 	var stderr strings.Builder
 	cmd.Stderr = &stderr

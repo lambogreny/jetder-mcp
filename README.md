@@ -117,16 +117,22 @@ override the env defaults. Each tool reports the resolved context in its result.
 ## Development notes
 
 This module imports the Jetder API package `github.com/jetder-core/api` (and its
-`/client` subpackage). That repo has **no published tags yet** and is private, so
-`go.mod` uses a **local replace** pointing at the parent directory:
+`/client` subpackage). That repo is **public** and fetchable without auth, so
+`go.mod` simply **pins it to a remote pseudo-version** — there is **no committed
+`replace`** and **no `GOPRIVATE`/credentials** needed (CI runners fetch it
+directly):
 
 ```
-replace github.com/jetder-core/api => ../
+require github.com/jetder-core/api v0.0.0-20251222122510-e4c734d325f7
 ```
 
-This keeps the MCP build in lockstep with the live parent module during
-development. Once `jetder-core/api` publishes tags, switch to a pinned remote
-version and set `GOPRIVATE=github.com/jetder-core/*` (plus CI git credentials).
+Pin a semver tag instead of the pseudo-version once `jetder-core/api` publishes
+one.
+
+**Local development against uncommitted `jetder-core/api` changes:** temporarily
+add a `replace github.com/jetder-core/api => ../` (or use a `go.work` file) — but
+**do not commit it**, or external `go run github.com/lambogreny/jetder-mcp@<ref>`
+will break.
 
 ## Layout
 
