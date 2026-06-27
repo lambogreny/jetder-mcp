@@ -5,29 +5,52 @@ jetder-mcp can manage Cloudflare DNS and register domains directly, so the whole
 **optional** — if you don't set the env below, the `cf-*` tools simply report that
 Cloudflare is not configured and the rest of the server works normally.
 
-## 1. Create a Cloudflare API token
+## 1. Create a Cloudflare API token (step by step)
 
-Cloudflare dashboard → **My Profile → API Tokens → Create Token → Create Custom Token**.
+1. Go to **<https://dash.cloudflare.com/profile/api-tokens>** (or: top-right account
+   menu → **My Profile** → **API Tokens**).
+2. Click **Create Token**, then **Create Custom Token** → **Get started**.
+3. Give it a name (e.g. `jetder-mcp`).
+4. Under **Permissions**, add a row per capability you need (click **+ Add more** for
+   each). Grant the **minimum** for what you'll use:
 
-Grant the **minimum** permissions for what you use:
+   | Permission (Group → Resource → Level)   | Enables                               |
+   |-----------------------------------------|---------------------------------------|
+   | **Zone → DNS → Edit**                   | `cf-dns-create`, `cf-dns-list`        |
+   | **Zone → Zone → Read**                  | `cf-zone-lookup` / resolving zones    |
+   | **Account → Registrar / Domains** → **Write** (Registrar **write** permission) | `cf-domain-search` / `cf-domain-check` / `cf-domain-register` |
 
-| Permission                              | Needed for                            |
-|-----------------------------------------|---------------------------------------|
-| **Zone → DNS → Edit**                   | `cf-dns-create`, `cf-dns-list`        |
-| **Zone → Zone → Read** (or Edit)        | `cf-zone-lookup` / resolving zones    |
-| **Account → Registrar Domains → Edit**  | `cf-domain-*` (search/check/register) |
+   > The first two (DNS Edit, Zone Read) cover DNS and pointing a domain. The third
+   > is needed **only if you intend to buy domains** via Registrar — Cloudflare
+   > describes it as a token with **Registrar write permissions**; the exact UI
+   > label may differ by account (look for a permission named **Registrar** or
+   > **Domains**). ⚠️ Do **not** pick **API Gateway** / **API Shield** for the
+   > Registrar — that is an unrelated product, not domain registration, unless
+   > Cloudflare's own UI/docs explicitly say it covers Registrar. When unsure,
+   > consult Cloudflare's
+   > [API token permissions](https://developers.cloudflare.com/fundamentals/api/reference/permissions/)
+   > docs for the current name. (Empirically, a token with these permissions
+   > successfully registered a domain through `cf-domain-register`.)
 
-- **Account Resources:** include the account you'll use (or "All accounts").
-- **Zone Resources:** the zones you'll manage (or "All zones" of the account).
-- Keep the scope as narrow as you actually need.
-
-Copy the token value (shown once).
+5. Under **Account Resources**, select **Include → <your account>** (required for the
+   Registrar tools). Under **Zone Resources**, select the zone(s) you'll manage, or
+   **All zones** of the account.
+6. (Optional) Set **Client IP Address Filtering** / **TTL** to tighten the token.
+7. Click **Continue to summary** → **Create Token**.
+8. **Copy the token now** — Cloudflare shows it **only once**. This is your
+   `CLOUDFLARE_API_TOKEN`.
 
 ## 2. Find your Account ID
 
-Dashboard → pick your account → **Overview** (right sidebar shows *Account ID*), or
-read it from the dashboard URL: `dash.cloudflare.com/<ACCOUNT_ID>/...`.
-The Account ID is **required for the Registrar tools** (domain search/check/register).
+1. Open **<https://dash.cloudflare.com>** and select your account.
+2. The fastest way: read it from the URL — `https://dash.cloudflare.com/<ACCOUNT_ID>/...`
+   (the long hex string right after `dash.cloudflare.com/`).
+3. Or, on a domain's **Overview** page, scroll the right sidebar to **API** →
+   **Account ID** → **Click to copy**.
+
+This is your `CLOUDFLARE_ACCOUNT_ID`. It is **required for the Registrar tools**
+(`cf-domain-search` / `cf-domain-check` / `cf-domain-register`); the DNS/zone tools
+don't need it.
 
 ## 3. Set the environment
 
@@ -41,6 +64,10 @@ export JETDER_TOKEN="<jetder-api-token>"
 
 Cloudflare auth is **Bearer** (separate from Jetder's Basic auth). The token and the
 `Bearer` header value are redacted from every error/log.
+
+For the registrant-contact variables (`CLOUDFLARE_REGISTRANT_*`) and the full list
+of every environment variable the server reads, see
+[CREDENTIALS.md](./CREDENTIALS.md).
 
 ## Cloudflare tools
 

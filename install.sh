@@ -114,7 +114,24 @@ cat >&2 <<EOF
 
 Next steps:
   1. Get a Jetder token from the owner: https://thunder.in.th/
-  2. Add jetder-mcp to your MCP client config, e.g.:
+EOF
+
+# If the Claude Code CLI is present, print (do NOT run) the ready-to-use command.
+# We never run it or handle the token — the user fills in the real values and runs
+# it themselves.
+if command -v claude >/dev/null 2>&1; then
+  cat >&2 <<EOF
+  2. Add jetder-mcp to Claude Code — fill in your values and run:
+
+       claude mcp add -e JETDER_AUTH_USER=<svc>@<project>.serviceaccount.jetder.com \\
+         -e JETDER_TOKEN=<your-jetder-api-token> --scope user jetder-mcp -- ${DEST}/${BIN}
+
+     (For other clients — Claude Desktop, Cursor, VS Code — see the README
+     "Add to your MCP client" section.)
+EOF
+else
+  cat >&2 <<EOF
+  2. Add jetder-mcp to your MCP client. Example (Claude Desktop / Cursor):
 
      {
        "mcpServers": {
@@ -128,5 +145,6 @@ Next steps:
        }
      }
 
-  See the README for Cloudflare/domain env vars and per-client config.
+     See the README "Add to your MCP client" section for every client.
 EOF
+fi

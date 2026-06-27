@@ -48,7 +48,8 @@ supply your token via `env`:
 Use the absolute path (e.g. `~/.local/bin/jetder-mcp`) for `command` if the bin
 dir is not on your client's `PATH`. Optional env for domain tools and defaults:
 `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `JETDER_DEFAULT_PROJECT`,
-`JETDER_DEFAULT_LOCATION` (see [Configuration](#configuration)).
+`JETDER_DEFAULT_LOCATION`. The full list of every variable the server reads is in
+**[docs/CREDENTIALS.md](./docs/CREDENTIALS.md)**.
 
 **4. Verify.** Ask the agent to run the **`check-setup`** tool — it reports
 whether your auth, project/location, Cloudflare config, and pull-secret are ready
@@ -215,6 +216,9 @@ mcp/
 
 - **[docs/GETTING-STARTED.md](./docs/GETTING-STARTED.md) — start here:** zero-to-deployed
   beginner guide (install tools, get credentials, connect any MCP client, deploy).
+- **[docs/CREDENTIALS.md](./docs/CREDENTIALS.md) — credential reference:** every env
+  var the server reads (Jetder, Cloudflare, registrant contact), required vs optional.
 - [docs/DEPLOY.md](./docs/DEPLOY.md) — deploy details: build → GHCR → deploy via MCP.
 - [docs/CLOUDFLARE-SETUP.md](./docs/CLOUDFLARE-SETUP.md) — Cloudflare DNS + domain
-  registration, and the `point-a-domain` guided prompt.
+  registration, the step-by-step token/Account-ID walkthrough, and the
+  `point-a-domain` guided prompt.
