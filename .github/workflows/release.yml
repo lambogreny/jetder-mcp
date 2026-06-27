@@ -2,8 +2,9 @@ name: release
 
 # Build cross-platform binaries on a version tag and attach them (plus a
 # SHA256SUMS file) to the GitHub Release. Asset names match install.sh:
-#   jetder-mcp_<os>_<arch>   (os: linux|darwin, arch: amd64|arm64)
-#   mcp-deploy_<os>_<arch>   (the CI deploy helper)
+#   jetder-mcp_<os>_<arch>[.exe]      (os: linux|darwin|windows, arch: amd64|arm64; windows: amd64 only)
+#   mcp-deploy_<os>_<arch>[.exe]      (the CI deploy helper)
+#   jetder-mcp_<os>_<arch>.mcpb       (Claude Desktop bundle; macOS + Windows)
 #   SHA256SUMS
 
 on:
