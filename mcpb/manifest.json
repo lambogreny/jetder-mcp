@@ -1,0 +1,45 @@
+{
+  "manifest_version": "0.4",
+  "name": "jetder-mcp",
+  "display_name": "Jetder MCP",
+  "version": "0.0.0",
+  "description": "Deploy apps and manage domains on Jetder from your AI agent — 62 tools, 3 prompts, 2 resources.",
+  "long_description": "An MCP server that exposes the Jetder API (deployments, projects, secrets, …) and Cloudflare (DNS + buying domains) to an AI agent. After installing, enter your Jetder service-account email and API token when prompted. Get access at https://thunder.in.th/",
+  "author": {
+    "name": "lambogreny",
+    "url": "https://github.com/lambogreny/jetder-mcp"
+  },
+  "homepage": "https://github.com/lambogreny/jetder-mcp",
+  "documentation": "https://github.com/lambogreny/jetder-mcp/blob/main/README.md",
+  "license": "MIT",
+  "server": {
+    "type": "binary",
+    "entry_point": "server/jetder-mcp",
+    "mcp_config": {
+      "command": "${__dirname}/server/jetder-mcp",
+      "args": [],
+      "env": {
+        "JETDER_AUTH_USER": "${user_config.jetder_user}",
+        "JETDER_TOKEN": "${user_config.jetder_token}"
+      }
+    }
+  },
+  "user_config": {
+    "jetder_user": {
+      "type": "string",
+      "title": "Jetder service-account email",
+      "description": "Your Jetder service-account email (the Basic-auth username), e.g. ai-dev@<project>.serviceaccount.jetder.com. No access yet? Get one at https://thunder.in.th/",
+      "required": true
+    },
+    "jetder_token": {
+      "type": "string",
+      "title": "Jetder API token",
+      "description": "Your Jetder API token (the Basic-auth password). Stored securely.",
+      "sensitive": true,
+      "required": true
+    }
+  },
+  "compatibility": {
+    "platforms": ["darwin"]
+  }
+}

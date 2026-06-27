@@ -69,7 +69,14 @@ claude mcp add -e JETDER_AUTH_USER=<svc>@<project>.serviceaccount.jetder.com \
 
 ### Claude Desktop
 
-Edit `claude_desktop_config.json` (macOS:
+**One-click (macOS):** download the `.mcpb` bundle for your Mac's architecture from
+the [latest release](https://github.com/lambogreny/jetder-mcp/releases/latest) —
+`jetder-mcp_darwin_arm64.mcpb` (Apple Silicon) or `jetder-mcp_darwin_amd64.mcpb`
+(Intel) — then open **Settings → Extensions → Install Extension** and select it.
+Claude Desktop prompts you for your **Jetder email** and **API token** (the token is
+masked and stored securely); no JSON editing. Get access at <https://thunder.in.th/>.
+
+**Manual (any OS):** edit `claude_desktop_config.json` (macOS:
 `~/Library/Application Support/Claude/`, Windows: `%APPDATA%\Claude\`):
 
 ```json
@@ -86,8 +93,9 @@ Edit `claude_desktop_config.json` (macOS:
 }
 ```
 
-Then restart Claude Desktop. (A one-click `.mcpb` bundle is planned — see the repo
-for status.)
+Then restart Claude Desktop. To use Cloudflare/domain tools, add the
+`CLOUDFLARE_*` variables (see [docs/CREDENTIALS.md](./docs/CREDENTIALS.md)) — they
+are not part of the one-click bundle.
 
 ### Cursor
 

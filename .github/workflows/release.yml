@@ -47,6 +47,40 @@ jobs:
           go build -trimpath -ldflags="-s -w" \
             -o "dist/mcp-deploy_${GOOS}_${GOARCH}" ./scripts/mcp-deploy
 
+      # Build a Claude Desktop .mcpb bundle for macOS only (the manifest declares
+      # compatibility.platforms = ["darwin"]). A .mcpb is a zip of manifest.json +
+      # server/<binary>; the version is injected from the tag. No secret is bundled —
+      # the env uses ${user_config.*} placeholders the user fills in Claude Desktop.
+      - name: Build .mcpb bundle (macOS)
+        if: matrix.os == 'darwin'
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+        run: |
+          set -eu
+          VERSION="${GITHUB_REF_NAME#v}"   # strip leading v for the manifest version
+          work="$(mktemp -d)"
+          mkdir -p "${work}/server"
+          cp "dist/jetder-mcp_${GOOS}_${GOARCH}" "${work}/server/jetder-mcp"
+          chmod +x "${work}/server/jetder-mcp"
+          # Inject the release version into the manifest, then validate it.
+          python3 - "$VERSION" "mcpb/manifest.json" "${work}/manifest.json" <<'PY'
+          import json, sys
+          version, src, dst = sys.argv[1], sys.argv[2], sys.argv[3]
+          m = json.load(open(src))
+          m["version"] = version
+          for k in ("manifest_version", "name", "version", "description", "author", "server"):
+              assert k in m, f"manifest missing required field: {k}"
+          assert m["manifest_version"] == "0.4", m["manifest_version"]
+          assert m["server"]["type"] == "binary"
+          json.dump(m, open(dst, "w"), indent=2)
+          PY
+          ( cd "$work" && zip -r -q "bundle.mcpb" manifest.json server/ )
+          cp "${work}/bundle.mcpb" "dist/jetder-mcp_${GOOS}_${GOARCH}.mcpb"
+          # Sanity: the bundle must contain manifest.json + server/jetder-mcp and no real token.
+          unzip -l "dist/jetder-mcp_${GOOS}_${GOARCH}.mcpb"
+          unzip -p "dist/jetder-mcp_${GOOS}_${GOARCH}.mcpb" manifest.json | grep -q '${user_config.jetder_token}'
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -68,6 +102,7 @@ jobs:
         run: |
           set -eu
           cd dist
+          # Include the .mcpb bundles in the checksums alongside the bare binaries.
           sha256sum jetder-mcp_* mcp-deploy_* > SHA256SUMS
           cat SHA256SUMS
 
