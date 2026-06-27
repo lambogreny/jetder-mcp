@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -19,9 +20,14 @@ import (
 //     through a MASKED markdown view: a client may auto-preload a resource, so the
 //     content must never include the authenticated email, token, or any secret.
 //   - jetder://help — static usage/quick-start text.
+//   - jetder://projects — the projects accessible to the user, as a SAFE list
+//     (id/project/name only). Deliberately drops billingAccount, webhookUrl (which
+//     can carry a secret), quota, config, and createdAt — a resource may be
+//     auto-preloaded, so the surface is kept minimal and secret-free.
 const (
-	statusResourceURI = "jetder://status"
-	helpResourceURI   = "jetder://help"
+	statusResourceURI   = "jetder://status"
+	helpResourceURI     = "jetder://help"
+	projectsResourceURI = "jetder://projects"
 )
 
 // registerResources adds the read-only MCP resources. cf may be nil.
@@ -59,6 +65,74 @@ func registerResources(server *mcp.Server, adapter *jetder.Adapter, cf *cloudfla
 			}},
 		}, nil
 	})
+
+	server.AddResource(&mcp.Resource{
+		URI:         projectsResourceURI,
+		Name:        "projects",
+		Title:       "Jetder projects",
+		Description: "The Jetder projects accessible to the authenticated user, as a safe list of id/project/name only (no billing, webhook, or other sensitive fields).",
+		MIMEType:    "application/json",
+	}, func(ctx context.Context, _ *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+		return &mcp.ReadResourceResult{
+			Contents: []*mcp.ResourceContents{{
+				URI:      projectsResourceURI,
+				MIMEType: "application/json",
+				Text:     renderProjectsJSON(ctx, adapter),
+			}},
+		}, nil
+	})
+}
+
+// ProjectResourceItem is the SAFE projection of a project for the resource — only
+// non-sensitive identifiers. It is deliberately separate from ProjectItem (which
+// carries billingAccount) so a sensitive field can never be added by accident.
+type ProjectResourceItem struct {
+	ID      string `json:"id"`
+	Project string `json:"project"`
+	Name    string `json:"name"`
+}
+
+// projectsResourcePayload is the JSON body of jetder://projects. On a backend
+// failure it carries an empty list + a redacted error note (the resource exists;
+// only the live read failed) — never a ReadResource transport error.
+type projectsResourcePayload struct {
+	Projects []ProjectResourceItem `json:"projects"`
+	Count    int                   `json:"count"`
+	Error    string                `json:"error,omitempty"`
+}
+
+// renderProjectsJSON lists the user's projects and marshals the safe payload. Any
+// list error is redacted and returned as content (not an error), so an
+// auto-preloading client gets a usable, secret-free body either way.
+func renderProjectsJSON(ctx context.Context, adapter *jetder.Adapter) string {
+	payload := projectsResourcePayload{Projects: []ProjectResourceItem{}}
+
+	res, err := adapter.Client().Project().List(ctx, nil)
+	if err != nil {
+		payload.Error = adapter.Redact(err).Error()
+		return marshalProjectsPayload(payload)
+	}
+	for _, x := range res.Items {
+		// Copy ONLY the safe identifiers — never billingAccount/webhookUrl/etc.
+		payload.Projects = append(payload.Projects, ProjectResourceItem{
+			ID:      fmt.Sprintf("%d", x.ID),
+			Project: x.Project,
+			Name:    x.Name,
+		})
+	}
+	payload.Count = len(payload.Projects)
+	return marshalProjectsPayload(payload)
+}
+
+// marshalProjectsPayload renders the payload as indented JSON. On the (unlikely)
+// marshal error it returns a minimal hand-built JSON object so the content is
+// always valid JSON and never leaks anything.
+func marshalProjectsPayload(p projectsResourcePayload) string {
+	b, err := json.MarshalIndent(p, "", "  ")
+	if err != nil {
+		return `{"projects":[],"count":0,"error":"failed to render projects"}`
+	}
+	return string(b)
 }
 
 // renderStatusMarkdown renders the readiness report as markdown WITHOUT leaking any
