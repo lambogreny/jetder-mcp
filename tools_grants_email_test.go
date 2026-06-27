@@ -1,8 +1,43 @@
 package main
 
 import (
+	"context"
 	"testing"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+// TestGrantsEmailAnnotations locks the destructive classification of the
+// side-effecting grant/key/email tools: each performs a real outward action
+// (grant access, mint a credential, send mail), so MCP clients should confirm
+// before calling — destructiveHint=true (and never read-only).
+func TestGrantsEmailAnnotations(t *testing.T) {
+	a := newTestAdapter(t, `{"ok":true,"result":{}}`, "p", "l")
+	cs := connectInMemory(t, a)
+
+	lt, err := cs.ListTools(context.Background(), &mcp.ListToolsParams{})
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	got := map[string]*mcp.ToolAnnotations{}
+	for _, tool := range lt.Tools {
+		got[tool.Name] = tool.Annotations
+	}
+
+	for _, name := range []string{"role-grant", "service-account-create-key", "email-send"} {
+		ann := got[name]
+		if ann == nil {
+			t.Errorf("%s: missing annotations", name)
+			continue
+		}
+		if ann.ReadOnlyHint {
+			t.Errorf("%s: readOnlyHint must be false (it mutates)", name)
+		}
+		if ann.DestructiveHint == nil || !*ann.DestructiveHint {
+			t.Errorf("%s: destructiveHint must be true (real side effect)", name)
+		}
+	}
+}
 
 func TestRoleGrant_EndToEnd(t *testing.T) {
 	a := newTestAdapter(t, `{"ok":true,"result":{}}`, "def-proj", "l")

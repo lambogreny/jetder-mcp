@@ -38,7 +38,8 @@ func registerRoleGrant(server *mcp.Server, adapter *jetder.Adapter) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "role-grant",
 		Description: "Grant a role to a user (additive; does not remove other roles).",
-		Annotations: nonReadOnly(),
+		// Grants real access — mark destructive so MCP clients confirm before the call.
+		Annotations: destructive(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in RoleGrantInput) (*mcp.CallToolResult, ResourceActionOutput, error) {
 		project := adapter.ResolveProject(in.Project)
 		role := strings.TrimSpace(in.Role)
@@ -80,7 +81,8 @@ func registerServiceAccountCreateKey(server *mcp.Server, adapter *jetder.Adapter
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "service-account-create-key",
 		Description: "Create a new key for a service account. Note: the pinned API does not return the key material in the response.",
-		Annotations: nonReadOnly(),
+		// Mints a real credential — mark destructive so MCP clients confirm first.
+		Annotations: destructive(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in SACreateKeyInput) (*mcp.CallToolResult, ResourceActionOutput, error) {
 		project := adapter.ResolveProject(in.Project)
 		id := strings.TrimSpace(in.ID)
@@ -132,7 +134,9 @@ func registerEmailSend(server *mcp.Server, adapter *jetder.Adapter) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "email-send",
 		Description: "Send an email from a project. contentType is text/plain or text/html.",
-		Annotations: nonReadOnly(),
+		// Sends a real email (an outward side effect) — mark destructive so MCP
+		// clients confirm before the call.
+		Annotations: destructive(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in EmailSendInput) (*mcp.CallToolResult, EmailSendOutput, error) {
 		project := adapter.ResolveProject(in.Project)
 		if project == "" {

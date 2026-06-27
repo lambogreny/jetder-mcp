@@ -143,9 +143,9 @@ override the env defaults. Each tool reports the resolved context in its result.
 | `service-account-create` / `-update`| Create / rename a service account.    | `destructiveHint:false`|
 | `organization-create` / `-update`   | Create / rename an organization.      | `destructiveHint:false`|
 | `role-create`         | Create a role with permissions.                      | `destructiveHint:false`|
-| `role-grant`          | Grant a role to a user (additive).                   | `destructiveHint:false`|
-| `service-account-create-key` | Create a key for a service account.           | `destructiveHint:false`|
-| `email-send`          | Send an email from a project.                        | `destructiveHint:false`|
+| `role-grant`          | Grant a role to a user (additive).                   | `destructiveHint:true` |
+| `service-account-create-key` | Create a key for a service account.           | `destructiveHint:true` |
+| `email-send`          | Send an email from a project.                        | `destructiveHint:true` |
 
 > `deployment-delete`, `domain-delete`, and `route-delete` are intentionally not
 > exposed. Route V1 create is superseded by `route-create-v2`.
