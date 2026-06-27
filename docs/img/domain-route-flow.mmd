@@ -1,0 +1,19 @@
+sequenceDiagram
+    actor U as You (in Claude)
+    participant M as jetder-mcp
+    participant J as Jetder API
+    participant C as Cloudflare DNS
+    U->>M: domain-create (domain)
+    M->>J: domain.create
+    J-->>M: ok
+    U->>M: domain-get
+    M->>J: read DNS records
+    J-->>M: pointTo (A/CNAME) + ownership/SSL TXT
+    U->>M: cf-dns-create (records)
+    Note over M,C: pointTo proxied=true gives instant Cloudflare SSL, TXT stays DNS-only
+    M->>C: create DNS records
+    C-->>M: ok
+    U->>M: route-create-v2 (domain, target deployment://name)
+    M->>J: route.createV2
+    J-->>M: routed
+    M-->>U: live (HTTPS) at https://your-domain
