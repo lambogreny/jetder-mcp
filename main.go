@@ -48,6 +48,7 @@ func run() error {
 	)
 
 	registerMeGet(server, adapter)
+	registerReadTools(server, adapter)
 
 	// Serve over stdin/stdout until the client disconnects.
 	return server.Run(context.Background(), &mcp.StdioTransport{})
@@ -70,11 +71,7 @@ func registerMeGet(server *mcp.Server, adapter *jetder.Adapter) {
 			return nil, MeGetOutput{}, adapter.Redact(err)
 		}
 		out := MeGetOutput{Email: item.Email, KYC: item.KYC}
-		return &mcp.CallToolResult{
-			Content: []mcp.Content{
-				&mcp.TextContent{Text: fmt.Sprintf("email=%s kyc=%t", out.Email, out.KYC)},
-			},
-		}, out, nil
+		return textResult(fmt.Sprintf("email=%s kyc=%t", out.Email, out.KYC)), out, nil
 	}
 
 	mcp.AddTool(server, &mcp.Tool{
