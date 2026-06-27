@@ -94,6 +94,38 @@ func TestRedact_NoTokenInMessage(t *testing.T) {
 	}
 }
 
+func TestRedactValues(t *testing.T) {
+	a := &Adapter{token: "tok-123"}
+
+	// redacts token + each provided secret; leaves other text.
+	in := errors.New("failed: secret=PLAINTEXT and token tok-123 in msg")
+	out := a.RedactValues(in, "PLAINTEXT")
+	msg := out.Error()
+	if contains(msg, "PLAINTEXT") {
+		t.Fatalf("value not redacted: %q", msg)
+	}
+	if contains(msg, "tok-123") {
+		t.Fatalf("token not redacted: %q", msg)
+	}
+
+	// nil error → nil.
+	if a.RedactValues(nil, "x") != nil {
+		t.Fatal("RedactValues(nil) should be nil")
+	}
+
+	// empty secret ignored, no false changes.
+	orig := errors.New("plain error")
+	if got := a.RedactValues(orig, ""); got != orig {
+		t.Fatalf("empty secret should passthrough original error, got %v", got)
+	}
+
+	// secret not present → original returned.
+	ne := errors.New("nothing sensitive")
+	if got := a.RedactValues(ne, "absent"); got != ne {
+		t.Fatalf("absent secret should passthrough, got %v", got)
+	}
+}
+
 func TestResolveProjectLocation(t *testing.T) {
 	a := &Adapter{defaultProject: "dp", defaultLocation: "dl"}
 

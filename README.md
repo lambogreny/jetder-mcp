@@ -84,6 +84,13 @@ override the env defaults. Each tool reports the resolved context in its result.
 | `domain-create`       | Add a custom domain to a project.                    | `destructiveHint:false`|
 | `domain-purge-cache`  | Purge the CDN cache for a domain (no resource delete).| `destructiveHint:true` |
 | `route-create-v2`     | Map a domain/path to a target (deployment://, etc.). | `destructiveHint:false`|
+| `disk-create` / `disk-update`       | Create a disk / resize (grow-only).   | `destructiveHint:false`|
+| `secret-create`       | Create a secret (value write-only, never echoed).    | `destructiveHint:false`|
+| `pull-secret-create`  | Create a registry pull secret (password write-only). | `destructiveHint:false`|
+| `workload-identity-create`          | Create a workload identity.           | `destructiveHint:false`|
+| `service-account-create` / `-update`| Create / rename a service account.    | `destructiveHint:false`|
+| `organization-create` / `-update`   | Create / rename an organization.      | `destructiveHint:false`|
+| `role-create`         | Create a role with permissions.                      | `destructiveHint:false`|
 
 > `deployment-delete`, `domain-delete`, and `route-delete` are intentionally not
 > exposed. Route V1 create is superseded by `route-create-v2`.
@@ -123,6 +130,7 @@ mcp/
   tools_domain.go            # domain create/get/list/purge-cache
   tools_route.go             # route create-v2/get/list
   tools_resources_read.go    # billing/disk/sa/role/secret/pullsecret/wi/org reads
+  tools_resources_write.go   # disk/secret/pullsecret/wi/sa/org/role create+update
   internal/jetder/
     client.go                # adapter: client construction, bearer auth, redaction, defaults
   go.mod

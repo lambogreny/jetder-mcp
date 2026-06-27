@@ -115,3 +115,30 @@ func (a *Adapter) Redact(err error) error {
 	}
 	return err
 }
+
+// RedactValues redacts the bearer token AND any of the given secret values
+// (e.g. a submitted secret/password) from an error message. Use this on the
+// error path of any tool that accepts secret material as input, so an upstream
+// error that echoes the submitted value can never leak it to MCP clients.
+// Returns nil for nil errors. Empty values are ignored.
+func (a *Adapter) RedactValues(err error, secrets ...string) error {
+	err = a.Redact(err)
+	if err == nil {
+		return nil
+	}
+	msg := err.Error()
+	changed := false
+	for _, s := range secrets {
+		if s == "" {
+			continue
+		}
+		if strings.Contains(msg, s) {
+			msg = strings.ReplaceAll(msg, s, "[REDACTED]")
+			changed = true
+		}
+	}
+	if changed {
+		return errors.New(msg)
+	}
+	return err
+}
