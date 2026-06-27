@@ -286,6 +286,9 @@ mcp/
 
 ## More docs
 
+- **[docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) — the big picture:** what the
+  server does, how it connects to Jetder / Cloudflare / GHCR, flow diagrams, the full
+  capability list, and the security model.
 - **[docs/GETTING-STARTED.md](./docs/GETTING-STARTED.md) — start here:** zero-to-deployed
   beginner guide (install tools, get credentials, connect any MCP client, deploy).
 - **[docs/CREDENTIALS.md](./docs/CREDENTIALS.md) — credential reference:** every env
