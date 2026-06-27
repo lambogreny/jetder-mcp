@@ -30,6 +30,7 @@ func TestToDeploymentItem(t *testing.T) {
 }
 
 func TestResolveDeploymentTarget_Defaults(t *testing.T) {
+	t.Setenv(jetder.EnvAuthUser, "ci@test.example")
 	t.Setenv(jetder.EnvToken, "tok")
 	t.Setenv(jetder.EnvDefaultProject, "def-proj")
 	t.Setenv(jetder.EnvDefaultLocation, "def-loc")
@@ -56,6 +57,7 @@ func TestResolveDeploymentTarget_Defaults(t *testing.T) {
 }
 
 func TestResolveDeploymentTarget_MissingName(t *testing.T) {
+	t.Setenv(jetder.EnvAuthUser, "ci@test.example")
 	t.Setenv(jetder.EnvToken, "tok")
 	t.Setenv(jetder.EnvDefaultProject, "p")
 	t.Setenv(jetder.EnvDefaultLocation, "l")
@@ -70,6 +72,7 @@ func TestResolveDeploymentTarget_MissingName(t *testing.T) {
 }
 
 func TestResolveDeploymentTarget_MissingProject(t *testing.T) {
+	t.Setenv(jetder.EnvAuthUser, "ci@test.example")
 	t.Setenv(jetder.EnvToken, "tok")
 	// no defaults set
 	t.Setenv(jetder.EnvDefaultProject, "")
@@ -85,6 +88,7 @@ func TestResolveDeploymentTarget_MissingProject(t *testing.T) {
 }
 
 func TestResolveDeploymentTarget_MissingLocation(t *testing.T) {
+	t.Setenv(jetder.EnvAuthUser, "ci@test.example")
 	t.Setenv(jetder.EnvToken, "tok")
 	t.Setenv(jetder.EnvDefaultProject, "")
 	t.Setenv(jetder.EnvDefaultLocation, "")
@@ -99,6 +103,7 @@ func TestResolveDeploymentTarget_MissingLocation(t *testing.T) {
 }
 
 func TestResolveDeploymentTarget_WhitespaceName(t *testing.T) {
+	t.Setenv(jetder.EnvAuthUser, "ci@test.example")
 	t.Setenv(jetder.EnvToken, "tok")
 	t.Setenv(jetder.EnvDefaultProject, "p")
 	t.Setenv(jetder.EnvDefaultLocation, "l")

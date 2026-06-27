@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -68,6 +69,7 @@ func runHelper(t *testing.T, helper, server, endpoint, token string, extra ...st
 	}, extra...)
 	cmd := exec.Command(helper, args...)
 	cmd.Env = append(os.Environ(),
+		"JETDER_AUTH_USER=ci@test.example",
 		"JETDER_TOKEN="+token,
 		"JETDER_ENDPOINT="+endpoint,
 		// ensure no hidden defaults influence the run
@@ -119,30 +121,35 @@ func TestDeploy_TokenNeverPrinted(t *testing.T) {
 	}
 }
 
-// TestDeploy_HelperRedactsServerStderr: a stub "server" that prints the token to
-// its OWN stderr before any handshake, then exits. The helper must redact the
-// token from the connect-failure summary it surfaces (helper-side sanitize, not
-// relying on the real server's redaction).
+// TestDeploy_HelperRedactsServerStderr: a stub "server" that prints ALL Basic-auth
+// credentials (user, token, and base64(user:token)) to its OWN stderr before any
+// handshake, then exits. The helper must redact ALL THREE from the connect-failure
+// summary it surfaces (helper-side sanitize, not relying on the server).
 func TestDeploy_HelperRedactsServerStderr(t *testing.T) {
 	_, helper := buildBinaries(t)
+	const user = "leak-user@svc.jetder.com"
 	const token = "STDERR-LEAK-TOKEN-999"
+	b64 := base64.StdEncoding.EncodeToString([]byte(user + ":" + token))
 
-	// stub server: emit token to stderr, exit 1 (never speaks MCP).
+	// stub server: emit user + token + base64 header to stderr, exit 1 (no MCP).
 	stub := filepath.Join(t.TempDir(), "stub.sh")
-	if err := os.WriteFile(stub, []byte("#!/bin/sh\necho \"boot error with $JETDER_TOKEN\" 1>&2\nexit 1\n"), 0o755); err != nil {
+	script := "#!/bin/sh\necho \"boot error: user=$JETDER_AUTH_USER token=$JETDER_TOKEN basic=" + b64 + "\" 1>&2\nexit 1\n"
+	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
 		t.Fatalf("write stub: %v", err)
 	}
 
 	cmd := exec.Command(helper,
 		"-server", stub, "-project", "p1", "-location", "l1", "-name", "web",
 		"-image", "img:1", "-timeout", "5s")
-	cmd.Env = append(os.Environ(), "JETDER_TOKEN="+token)
+	cmd.Env = append(os.Environ(), "JETDER_AUTH_USER="+user, "JETDER_TOKEN="+token)
 	out, err := cmd.CombinedOutput()
 	if err == nil {
 		t.Fatalf("expected failure when server can't handshake; output:\n%s", out)
 	}
-	if strings.Contains(string(out), token) {
-		t.Fatalf("TOKEN LEAK from server stderr via helper:\n%s", out)
+	for _, leak := range []string{user, token, b64} {
+		if strings.Contains(string(out), leak) {
+			t.Fatalf("CREDENTIAL LEAK (%q) from server stderr via helper:\n%s", leak, out)
+		}
 	}
 	if !strings.Contains(string(out), "[REDACTED]") {
 		t.Fatalf("expected [REDACTED] marker, got:\n%s", out)
@@ -161,6 +168,7 @@ func TestDeploy_WhitespaceFlagsTrimmed(t *testing.T) {
 		"-project", "  p1  ", "-location", " l1 ", "-name", " web ",
 		"-image", " ghcr.io/lambogreny/app:sha ")
 	cmd.Env = append(os.Environ(),
+		"JETDER_AUTH_USER=ci@test.example",
 		"JETDER_TOKEN=tok", "JETDER_ENDPOINT="+fake.URL,
 		"JETDER_DEFAULT_PROJECT=", "JETDER_DEFAULT_LOCATION=")
 	out, err := cmd.CombinedOutput()
@@ -229,6 +237,7 @@ func TestDeploy_ServerCommand_Success(t *testing.T) {
 		"-project", "p1", "-location", "l1", "-name", "web",
 		"-image", "ghcr.io/lambogreny/app:sha")
 	cmd.Env = append(os.Environ(),
+		"JETDER_AUTH_USER=ci@test.example",
 		"JETDER_TOKEN=tok", "JETDER_ENDPOINT="+fake.URL,
 		"JETDER_DEFAULT_PROJECT=", "JETDER_DEFAULT_LOCATION=")
 	out, err := cmd.CombinedOutput()

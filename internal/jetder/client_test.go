@@ -1,13 +1,17 @@
 package jetder
 
 import (
+	"encoding/base64"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 )
 
 func TestNew_NoToken(t *testing.T) {
+	t.Setenv(EnvAuthUser, "ci@test.example")
 	t.Setenv(EnvToken, "")
+	t.Setenv(EnvAuthPass, "")
 
 	a, err := New()
 	if !errors.Is(err, ErrNoToken) {
@@ -18,16 +22,43 @@ func TestNew_NoToken(t *testing.T) {
 	}
 }
 
+func TestNew_NoUser(t *testing.T) {
+	t.Setenv(EnvAuthUser, "")
+	t.Setenv(EnvToken, "tok")
+
+	if _, err := New(); !errors.Is(err, ErrNoUser) {
+		t.Fatalf("New() without user error = %v, want ErrNoUser", err)
+	}
+}
+
 func TestNew_TrimsWhitespaceToken(t *testing.T) {
+	t.Setenv(EnvAuthUser, "ci@test.example")
 	t.Setenv(EnvToken, "   \t ")
+	t.Setenv(EnvAuthPass, "")
 
 	if _, err := New(); !errors.Is(err, ErrNoToken) {
 		t.Fatalf("New() with whitespace-only token error = %v, want ErrNoToken", err)
 	}
 }
 
-func TestNew_AuthInjectsBearer(t *testing.T) {
+func TestNew_AuthPassAlias(t *testing.T) {
+	t.Setenv(EnvAuthUser, "u@x")
+	t.Setenv(EnvToken, "")
+	t.Setenv(EnvAuthPass, "pass-via-alias")
+
+	a, err := New()
+	if err != nil {
+		t.Fatalf("New() with JETDER_AUTH_PASS error = %v", err)
+	}
+	if a.token != "pass-via-alias" {
+		t.Fatalf("token = %q, want pass-via-alias", a.token)
+	}
+}
+
+func TestNew_AuthInjectsBasic(t *testing.T) {
+	const user = "ai-dev@dev-lambogreny.serviceaccount.jetder.com"
 	const token = "secret-token-123"
+	t.Setenv(EnvAuthUser, user)
 	t.Setenv(EnvToken, token)
 
 	a, err := New()
@@ -46,10 +77,13 @@ func TestNew_AuthInjectsBearer(t *testing.T) {
 	}
 	auth(req)
 
-	got := req.Header.Get("Authorization")
-	want := "Bearer " + token
-	if got != want {
-		t.Fatalf("Authorization header = %q, want %q", got, want)
+	// must be Basic auth, not Bearer.
+	if h := req.Header.Get("Authorization"); !strings.HasPrefix(h, "Basic ") {
+		t.Fatalf("Authorization = %q, want Basic scheme", h)
+	}
+	gotUser, gotPass, ok := req.BasicAuth()
+	if !ok || gotUser != user || gotPass != token {
+		t.Fatalf("BasicAuth = (%q,%q,%v), want (%q,%q,true)", gotUser, gotPass, ok, user, token)
 	}
 }
 
@@ -75,6 +109,25 @@ func TestRedact_RemovesToken(t *testing.T) {
 	}
 	if !contains(msg, "[REDACTED]") {
 		t.Fatalf("Redact result %q missing [REDACTED] marker", msg)
+	}
+}
+
+func TestRedact_RemovesUserAndBase64(t *testing.T) {
+	const user = "ai-dev@dev-lambogreny.serviceaccount.jetder.com"
+	const token = "super-secret-pass"
+	b64 := base64.StdEncoding.EncodeToString([]byte(user + ":" + token))
+	a := &Adapter{user: user, token: token, basicB64: b64}
+
+	// an error that leaks the raw Basic header value (base64) + user + token.
+	in := errors.New("auth failed: header Basic " + b64 + " user=" + user + " pass=" + token)
+	out := a.Redact(in).Error()
+	for _, leak := range []string{b64, user, token} {
+		if strings.Contains(out, leak) {
+			t.Fatalf("credential leak (%q) in redacted output: %q", leak, out)
+		}
+	}
+	if !strings.Contains(out, "[REDACTED]") {
+		t.Fatalf("missing [REDACTED] marker: %q", out)
 	}
 }
 

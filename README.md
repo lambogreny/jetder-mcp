@@ -23,7 +23,9 @@ over **stdio**.
 
 ```sh
 cd mcp
-export JETDER_TOKEN="<your-jetder-api-token>"   # required
+# Jetder uses HTTP Basic auth: service-account email + API token.
+export JETDER_AUTH_USER="<svc>@<project>.serviceaccount.jetder.com"  # required (username)
+export JETDER_TOKEN="<your-jetder-api-token>"                        # required (password)
 # export JETDER_ENDPOINT="https://api.jetder.com/"  # optional override
 
 go build ./...
@@ -35,15 +37,17 @@ launched by an MCP client (e.g. Claude Code) rather than run interactively.
 
 ### Configuration
 
-| Env var                   | Required | Default                   | Notes                                                      |
-|---------------------------|----------|---------------------------|------------------------------------------------------------|
-| `JETDER_TOKEN`            | yes      | —                         | Bearer token; never logged or echoed.                      |
-| `JETDER_ENDPOINT`         | no       | `https://api.jetder.com/` | Override the API base URL (testing).                       |
-| `JETDER_DEFAULT_PROJECT`  | no       | —                         | Fallback project sid when a tool's `project` arg is empty. |
-| `JETDER_DEFAULT_LOCATION` | no       | —                         | Fallback location when a tool's `location` arg is empty.   |
+| Env var                   | Required | Default                   | Notes                                                          |
+|---------------------------|----------|---------------------------|----------------------------------------------------------------|
+| `JETDER_AUTH_USER`        | yes      | —                         | Basic-auth username = service-account email.                   |
+| `JETDER_TOKEN`            | yes      | —                         | Basic-auth password = API token. Alias: `JETDER_AUTH_PASS`. Never logged/echoed. |
+| `JETDER_ENDPOINT`         | no       | `https://api.jetder.com/` | Override the API base URL (testing).                           |
+| `JETDER_DEFAULT_PROJECT`  | no       | —                         | Fallback project sid when a tool's `project` arg is empty.     |
+| `JETDER_DEFAULT_LOCATION` | no       | —                         | Fallback location when a tool's `location` arg is empty.       |
 
-The token is injected as `Authorization: Bearer <token>` on every request and is
-redacted from any error message before it reaches the client.
+Credentials are applied as HTTP **Basic auth** (`r.SetBasicAuth(user, token)`) on
+every request. The username, token, and the base64 `user:token` header value are
+all redacted from any error message before it reaches the client.
 
 Per-tool `project`/`location` arguments are the source of truth and always
 override the env defaults. Each tool reports the resolved context in its result.
@@ -148,7 +152,7 @@ mcp/
   tools_resources_write.go   # disk/secret/pullsecret/wi/sa/org/role create+update
   tools_grants_email.go      # role grant/bind, sa create-key, email send
   internal/jetder/
-    client.go                # adapter: client construction, bearer auth, redaction, defaults
+    client.go                # adapter: client construction, basic auth, redaction, defaults
   go.mod
   README.md
 ```

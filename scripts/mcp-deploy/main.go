@@ -8,8 +8,11 @@
 // mismatch between the resolved context and the explicit arguments.
 //
 // Security:
-//   - JETDER_TOKEN is read from this process's environment and inherited by the
-//     child server only. It is NEVER passed as a tool argument and NEVER printed.
+//   - Jetder uses HTTP Basic auth. JETDER_AUTH_USER (service-account email) and
+//     JETDER_TOKEN (API token) are read from this process's environment and
+//     inherited by the child server only. They are NEVER passed as tool arguments
+//     and NEVER printed — the user, the token, and the base64(user:token) header
+//     value are all redacted from any surfaced output.
 //   - The server's stderr is captured and only a sanitized one-line summary is
 //     surfaced on failure (never raw JSON-RPC or the environment).
 //
@@ -29,6 +32,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -59,7 +63,12 @@ type config struct {
 	image     string
 	branch    string
 	timeout   time.Duration
-	token     string // from JETDER_TOKEN; used for sanitization, never printed
+	// Basic-auth credentials, for sanitization only (never printed). authUser =
+	// JETDER_AUTH_USER, token = JETDER_TOKEN/JETDER_AUTH_PASS, basicB64 =
+	// base64(user:token) (the raw Basic header value).
+	authUser string
+	token    string
+	basicB64 string
 }
 
 // serverArgv returns the command + args used to launch the MCP server. If
@@ -79,14 +88,17 @@ func (c config) serverArgv() ([]string, error) {
 	return []string{c.server}, nil
 }
 
-// sanitize removes the bearer token from any text the helper is about to surface
-// (server stderr, tool-error text, SDK error strings) — defense in depth so the
-// helper itself can never leak the token even if a child or the SDK echoes it.
+// sanitize removes the Basic-auth credentials — the token, the username, and the
+// base64(user:token) header value — from any text the helper is about to surface
+// (server stderr, tool-error text, SDK error strings). Defense in depth so the
+// helper itself can never leak a credential even if a child or the SDK echoes it.
 func (c config) sanitize(s string) string {
-	if c.token == "" {
-		return s
+	for _, cred := range []string{c.basicB64, c.token, c.authUser} {
+		if cred != "" {
+			s = strings.ReplaceAll(s, cred, "[REDACTED]")
+		}
 	}
-	return strings.ReplaceAll(s, c.token, "[REDACTED]")
+	return s
 }
 
 func parseFlags() (config, error) {
@@ -118,9 +130,18 @@ func parseFlags() (config, error) {
 	if len(missing) > 0 {
 		return c, fmt.Errorf("missing required flags: %s", strings.Join(missing, ", "))
 	}
-	c.token = os.Getenv("JETDER_TOKEN")
+	// Basic-auth creds: the child server enforces them; the helper only needs
+	// them to sanitize its output. token = JETDER_TOKEN or JETDER_AUTH_PASS.
+	c.token = strings.TrimSpace(os.Getenv("JETDER_TOKEN"))
 	if c.token == "" {
-		return c, errors.New("JETDER_TOKEN must be set in the environment")
+		c.token = strings.TrimSpace(os.Getenv("JETDER_AUTH_PASS"))
+	}
+	if c.token == "" {
+		return c, errors.New("JETDER_TOKEN (or JETDER_AUTH_PASS) must be set in the environment")
+	}
+	c.authUser = strings.TrimSpace(os.Getenv("JETDER_AUTH_USER"))
+	if c.authUser != "" {
+		c.basicB64 = base64.StdEncoding.EncodeToString([]byte(c.authUser + ":" + c.token))
 	}
 	return c, nil
 }

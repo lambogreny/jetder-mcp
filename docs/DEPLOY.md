@@ -14,7 +14,7 @@ AI agents (Claude) that need to understand and trigger deploys.
       │                       └──────────────────────┘            │         │
       │ deploy job (gated)               ▲                         │         │
       ▼                                  │ deployment-deploy       │         │
- ┌────────────┐  spawns (stdio)  ┌───────┴────────┐   Bearer      │         │
+ ┌────────────┐  spawns (stdio)  ┌───────┴────────┐  Basic auth   │         │
  │ mcp-deploy │ ───────────────▶ │ jetder-mcp     │ ────────────▶ │         │
  │  helper    │ ◀─ result ─────  │ (MCP server)   │ ◀─ result ──  │         │
  └────────────┘                  └────────────────┘               └─────────┘
@@ -33,8 +33,10 @@ AI agents (Claude) that need to understand and trigger deploys.
 > [`jetder-sample-app`](https://github.com/lambogreny/jetder-sample-app) — copy
 > its `.github/workflows/deploy.yml` as your starting point.
 
-The MCP server talks to the Jetder API with `Authorization: Bearer $JETDER_TOKEN`.
-The token is **never** a tool argument and is masked/redacted everywhere.
+The MCP server authenticates to the Jetder API with **HTTP Basic auth** —
+`JETDER_AUTH_USER` (service-account email) as the username and `JETDER_TOKEN` as
+the password. Credentials are **never** tool arguments and are masked/redacted
+everywhere (username, token, and the base64 header value).
 
 ## Branch strategy (dev → staging → prod)
 
@@ -70,8 +72,10 @@ to that tier; the `main` (production) deploy waits for environment approval.
    (Environments → \<env\> → Add secret) — **not** a repo-wide secret. This way
    each tier can hold a least-privilege token scoped to that tier's deployment,
    and the token is only available to jobs bound to that environment.
-5. Add **Variables** — `JETDER_PROJECT` and `JETDER_LOCATION` (the location id;
-   see `location-list`). These are shared, so repo-level Variables are fine.
+5. Add **Variables** — `JETDER_AUTH_USER` (the service-account email = Basic-auth
+   username), `JETDER_PROJECT`, and `JETDER_LOCATION` (the location id; see
+   `location-list`). These are shared, so repo-level Variables are fine. (The
+   username is not secret; only `JETDER_TOKEN` is a Secret.)
 
 The deploy job sets `environment:` from the branch, so it picks up that env's
 `JETDER_TOKEN` and (for production) waits for approval, while dev/staging flow
@@ -108,6 +112,7 @@ through.
   cd mcp
   go build -o jetder-mcp .
   go build -o mcp-deploy ./scripts/mcp-deploy
+  JETDER_AUTH_USER=<svc>@<project>.serviceaccount.jetder.com \
   JETDER_TOKEN=*** ./mcp-deploy \
     -server ./jetder-mcp \
     -project <sid> -location <loc> -name <deployment> \

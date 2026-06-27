@@ -21,6 +21,7 @@ func newTestAdapter(t *testing.T, body, defProject, defLocation string) *jetder.
 	}))
 	t.Cleanup(srv.Close)
 
+	t.Setenv(jetder.EnvAuthUser, "ci@test.example")
 	t.Setenv(jetder.EnvToken, "tok")
 	t.Setenv(jetder.EnvEndpoint, srv.URL)
 	t.Setenv(jetder.EnvDefaultProject, defProject)
