@@ -1,0 +1,16 @@
+sequenceDiagram
+    actor U as You (in Claude)
+    participant M as jetder-mcp
+    participant J as Jetder API
+    participant R as Registry (GHCR)
+    U->>M: deployment-deploy (name, image, pullSecret?)
+    Note over M: resolve project/location, validate image + pull-secret (no tokens)
+    M->>J: deployment.deploy (Basic auth)
+    J->>R: pull image (private uses pull-secret)
+    R-->>J: image
+    J-->>M: accepted
+    M-->>U: success
+    U->>M: deployment-get
+    M->>J: read status + URL
+    J-->>M: status=success, url
+    M-->>U: live at https://your-app
