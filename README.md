@@ -5,8 +5,8 @@ exposes the [Jetder](https://jetder.com) API as MCP tools and resources, served
 over **stdio**.
 
 > **Status:** in progress. Read-only tools for Me, Location, Project, and
-> Deployment are implemented. Deployment actions (deploy/pause/resume/rollback)
-> and Domain/Route are added in subsequent slices.
+> Deployment plus Deployment actions (deploy/pause/resume/rollback) are
+> implemented. Domain/Route and other resources follow in subsequent slices.
 
 ## Requirements
 
@@ -44,7 +44,7 @@ override the env defaults. Each tool reports the resolved context in its result.
 
 ## Tools
 
-All tools below are read-only (annotated `readOnlyHint`).
+### Read-only (annotated `readOnlyHint: true`)
 
 | Tool                   | Description                                                       |
 |------------------------|------------------------------------------------------------------|
@@ -58,6 +58,17 @@ All tools below are read-only (annotated `readOnlyHint`).
 | `deployment-get`       | Get a deployment (latest or a specific revision).                |
 | `deployment-revisions` | List revision history for a deployment.                          |
 | `deployment-metrics`   | Time-series metrics (cpu, memory, requests, egress).             |
+
+### State-changing (`readOnlyHint: false`)
+
+| Tool                  | Description                                          | Annotation             |
+|-----------------------|------------------------------------------------------|------------------------|
+| `deployment-deploy`   | Deploy/redeploy a service (changes active revision). | `destructiveHint:true` |
+| `deployment-pause`    | Pause a deployment (stops serving until resumed).    | `destructiveHint:true` |
+| `deployment-resume`   | Resume a paused deployment (restorative).            | `destructiveHint:false`|
+| `deployment-rollback` | Roll a deployment back to a previous revision.       | `destructiveHint:true` |
+
+> `deployment-delete` is intentionally not exposed.
 
 ## Development notes
 
@@ -80,6 +91,7 @@ mcp/
   main.go                    # server wiring + me-get tool
   tools_read.go              # location-*, project-* read tools
   tools_deployment_read.go   # deployment-* read tools
+  tools_deployment_action.go # deployment deploy/pause/resume/rollback
   internal/jetder/
     client.go                # adapter: client construction, bearer auth, redaction, defaults
   go.mod
