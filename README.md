@@ -4,13 +4,15 @@ An [MCP](https://modelcontextprotocol.io) (Model Context Protocol) server that
 exposes the [Jetder](https://jetder.com) API as MCP tools and resources, served
 over **stdio**.
 
-> **Status:** feature-complete for the supported API surface (55 tools). Covers
+> **Status:** feature-complete for the supported API surface (54 tools). Covers
 > Me, Location, Project, Deployment (read + deploy/pause/resume/rollback),
 > Domain/Route, Billing (read), Disk, ServiceAccount, Role, Secret/PullSecret
 > (redacted), WorkloadIdentity, Organization, and Email. Deferred resources
 > (EnvGroup, OrganizationRole, GitConnect, ActivityLog, Database) are not yet
-> reachable through the pinned API client; `*delete`, role revoke, and key
-> deletion are intentionally not exposed.
+> reachable through the pinned API client. Also deferred for safety until an
+> explicit opt-in: `role-bind` (replace-all role set = implicit revoke) and route
+> `forwardAuth` (upstream validation contradiction). `*delete`, role revoke, and
+> service-account key deletion are intentionally not exposed.
 
 ## Requirements
 
