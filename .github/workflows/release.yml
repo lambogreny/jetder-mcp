@@ -37,8 +37,11 @@ jobs:
         run: |
           set -eu
           mkdir -p dist
+          # Stamp the release tag into the server version so serverInfo.version
+          # always matches the published tag (no drift from the source default).
+          VERSION="${GITHUB_REF_NAME}"
           # main server binary
-          go build -trimpath -ldflags="-s -w" \
+          go build -trimpath -ldflags="-s -w -X main.serverVersion=${VERSION}" \
             -o "dist/jetder-mcp_${GOOS}_${GOARCH}" .
           # CI deploy helper
           go build -trimpath -ldflags="-s -w" \

@@ -17,10 +17,13 @@ import (
 	"github.com/lambogreny/jetder-mcp/internal/jetder"
 )
 
-const (
-	serverName    = "jetder-mcp"
-	serverVersion = "v0.0.1"
-)
+const serverName = "jetder-mcp"
+
+// serverVersion is reported as the MCP server's implementation version. It is a
+// var (not a const) so a release build can stamp the exact tag via
+// -ldflags "-X main.serverVersion=vX.Y.Z"; the default tracks the current release
+// for source builds. Keep this in sync with the latest release tag.
+var serverVersion = "v0.1.0"
 
 func main() {
 	if err := run(); err != nil {
