@@ -167,6 +167,8 @@ mcp/
 
 ## More docs
 
-- [docs/DEPLOY.md](./docs/DEPLOY.md) — CI/CD: build → GHCR → deploy via MCP.
+- **[docs/GETTING-STARTED.md](./docs/GETTING-STARTED.md) — start here:** zero-to-deployed
+  beginner guide (install tools, get credentials, connect any MCP client, deploy).
+- [docs/DEPLOY.md](./docs/DEPLOY.md) — deploy details: build → GHCR → deploy via MCP.
 - [docs/CLOUDFLARE-SETUP.md](./docs/CLOUDFLARE-SETUP.md) — Cloudflare DNS + domain
   registration, and the `point-a-domain` guided prompt.
