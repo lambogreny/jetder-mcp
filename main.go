@@ -113,6 +113,7 @@ func buildServer(adapter *jetder.Adapter, cf *cloudflare.Client) *mcp.Server {
 	registerCheckSetup(server, adapter, cf)
 	registerDeploymentLogs(server, adapter, cf)
 	registerDeploymentDiagnose(server, adapter, cf)
+	registerDeploymentEvents(server, adapter, cf)
 	registerResources(server, adapter, cf)
 	registerPointADomainPrompt(server)
 	registerDeployWizardPrompts(server)

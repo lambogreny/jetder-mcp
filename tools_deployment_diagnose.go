@@ -160,65 +160,8 @@ func fetchPodHealth(ctx context.Context, adapter *jetder.Adapter, statusURL stri
 	return &h
 }
 
-// eventItem is a tolerant view of a Kubernetes event from the eventUrl JSON. The
-// `clean` field holds the sanitized event text and is the ONLY thing downstream code
-// should read — it is scrubbed of secrets (incl. the eventUrl/JWT) at fetch time.
-type eventItem struct {
-	Type    string `json:"type"`
-	Reason  string `json:"reason"`
-	Message string `json:"message"`
-	Note    string `json:"note"`
-	clean   string // sanitized Reason+Message, set by fetchEvents
-}
-
-func (e eventItem) rawText() string {
-	msg := e.Message
-	if msg == "" {
-		msg = e.Note
-	}
-	return strings.TrimSpace(e.Reason + " " + msg)
-}
-
-// text returns the SANITIZED event text (set at fetch time). Never the raw text.
-func (e eventItem) text() string { return e.clean }
-
-// fetchEvents reads the eventUrl (finite JSON; may be null/empty when healthy),
-// returns a tolerant list of events, and sanitizes each event's text up front —
-// passing eventURL so a body that echoes the URL/JWT is scrubbed too.
-func fetchEvents(ctx context.Context, adapter *jetder.Adapter, eventURL string) []eventItem {
-	if strings.TrimSpace(eventURL) == "" {
-		return nil
-	}
-	b, _, err := adapter.FetchJSON(ctx, eventURL, diagJSONMaxBytes)
-	if err != nil {
-		return nil
-	}
-	b = []byte(strings.TrimSpace(string(b)))
-	if len(b) == 0 || string(b) == "null" {
-		return nil
-	}
-	// The payload may be an array of events, or an object wrapping {items:[...]}.
-	var events []eventItem
-	if err := json.Unmarshal(b, &events); err != nil {
-		var wrap struct {
-			Items  []eventItem `json:"items"`
-			Events []eventItem `json:"events"`
-		}
-		if err := json.Unmarshal(b, &wrap); err != nil {
-			return nil
-		}
-		if len(wrap.Items) > 0 {
-			events = wrap.Items
-		} else {
-			events = wrap.Events
-		}
-	}
-	// Sanitize each event's text NOW (with eventURL), so every downstream use is clean.
-	for i := range events {
-		events[i].clean = sanitizeLog(adapter, events[i].rawText(), eventURL)
-	}
-	return events
-}
+// eventItem + fetchEvents now live in tools_deployment_events_shared.go (shared with
+// the deployment-events tool). diagJSONMaxBytes (status fetch) stays here.
 
 func summarizeEvents(adapter *jetder.Adapter, events []eventItem) string {
 	if len(events) == 0 {
