@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/jetder-core/api"
@@ -32,6 +33,107 @@ func validatePullSecretName(v string) (string, error) {
 		return "", fmt.Errorf("invalid pullSecret: must be a pull-secret NAME matching %s (a name, never a token/URL)", rePullSecretName.String())
 	}
 	return v, nil
+}
+
+// validateEnvKeys checks env-var KEYS only (never values — they may be secrets). The
+// API does its own reEnvName validation; here we catch the obvious mistakes early and
+// WITHOUT echoing any value: empty key, a key containing '=' (likely "KEY=val" pasted
+// into the key), or control characters. Error messages name the offending KEY only.
+func validateEnvKeys(env map[string]string) error {
+	for k := range env {
+		if err := validateEnvKey(k); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateEnvKeyList(keys []string) error {
+	for _, k := range keys {
+		if err := validateEnvKey(k); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateEnvKey(k string) error {
+	if strings.TrimSpace(k) == "" {
+		return fmt.Errorf("invalid env: a variable name is empty")
+	}
+	// A '=' in the KEY usually means a "KEY=value" pair was pasted into the key slot —
+	// and that value may be a SECRET. NEVER echo the raw key here (it would leak the
+	// value after '='). A generic message is enough.
+	if strings.ContainsRune(k, '=') {
+		return fmt.Errorf("invalid env name: a variable name must not contain '=' (put the value in the map value, not the key)")
+	}
+	for _, r := range k {
+		if r < 0x20 || r == 0x7f {
+			return fmt.Errorf("invalid env name: a variable name contains a control character")
+		}
+	}
+	return nil
+}
+
+// envValues returns all VALUES across the given env maps, so they can be passed to
+// RedactValues and scrubbed from any error (never logged or echoed otherwise).
+func envValues(maps ...map[string]string) []string {
+	var vals []string
+	for _, m := range maps {
+		for _, v := range m {
+			if v != "" {
+				vals = append(vals, v)
+			}
+		}
+	}
+	return vals
+}
+
+// envKeySummary returns a " envAdd=[K1,K2] envReplace=N removeEnv=[..] envGroups=[..]"
+// fragment for the action summary — KEY NAMES and counts only, NEVER values.
+func envKeySummary(in DeploymentDeployInput) string {
+	var b strings.Builder
+	if len(in.AddEnv) > 0 {
+		fmt.Fprintf(&b, " addEnv=[%s]", strings.Join(sortedKeys(in.AddEnv), ","))
+	}
+	if len(in.Env) > 0 {
+		fmt.Fprintf(&b, " env(replace)=[%s]", strings.Join(sortedKeys(in.Env), ","))
+	}
+	if len(in.RemoveEnv) > 0 {
+		fmt.Fprintf(&b, " removeEnv=[%s]", strings.Join(in.RemoveEnv, ","))
+	}
+	if len(in.EnvGroups) > 0 {
+		fmt.Fprintf(&b, " envGroups=[%s]", strings.Join(in.EnvGroups, ","))
+	}
+	return b.String()
+}
+
+// safeEnvKeys returns the keys safe to display: any key that fails validateEnvKey
+// (empty, contains '=', or control chars) is replaced with a generic "[invalid]"
+// placeholder — NEVER the raw key, since a "KEY=secret" paste would otherwise leak the
+// value. Returns the rendered list and whether any key was masked.
+func safeEnvKeys(keys []string) ([]string, bool) {
+	out := make([]string, 0, len(keys))
+	bad := false
+	for _, k := range keys {
+		if validateEnvKey(k) != nil {
+			out = append(out, "[invalid]")
+			bad = true
+			continue
+		}
+		out = append(out, k)
+	}
+	return out, bad
+}
+
+// sortedKeys returns the map's keys in sorted order (deterministic summary).
+func sortedKeys(m map[string]string) []string {
+	ks := make([]string, 0, len(m))
+	for k := range m {
+		ks = append(ks, k)
+	}
+	sort.Strings(ks)
+	return ks
 }
 
 // registerDeploymentActionTools registers the state-changing deployment tools:
@@ -103,6 +205,12 @@ type DeploymentDeployInput struct {
 	// PullSecret is the NAME of an existing pull secret (created out-of-band) used
 	// to pull a private image. Only the name is accepted here — never credentials.
 	PullSecret string `json:"pullSecret,omitempty" jsonschema:"name of an existing pull secret for private images (credentials are NOT accepted here)"`
+	// Runtime environment variables. VALUES MAY BE SECRETS — they are write-only and
+	// are NEVER echoed back (only key names appear in output/errors).
+	AddEnv    map[string]string `json:"addEnv,omitempty" jsonschema:"environment variables to ADD/UPDATE, merged onto the deployment's existing env (the safe default; values are write-only and never returned)"`
+	Env       map[string]string `json:"env,omitempty" jsonschema:"REPLACE the deployment's entire env with this set (destructive — drops existing vars; prefer addEnv. Cannot be combined with addEnv. values are write-only)"`
+	RemoveEnv []string          `json:"removeEnv,omitempty" jsonschema:"names of environment variables to remove"`
+	EnvGroups []string          `json:"envGroups,omitempty" jsonschema:"names of existing env groups to attach to the deployment"`
 }
 
 func registerDeploymentDeploy(server *mcp.Server, adapter *jetder.Adapter) {
@@ -114,6 +222,22 @@ func registerDeploymentDeploy(server *mcp.Server, adapter *jetder.Adapter) {
 		if strings.TrimSpace(in.Image) == "" {
 			return nil, ActionResult{}, fmt.Errorf("image required")
 		}
+		// env: addEnv (merge) and env (replace-all) are mutually exclusive. Validate the
+		// KEYS before any POST so a malformed request is rejected up front (nothing
+		// echoed). Values are never validated/echoed — they may be secrets.
+		if len(in.AddEnv) > 0 && len(in.Env) > 0 {
+			return nil, ActionResult{}, fmt.Errorf("addEnv and env cannot be combined: addEnv merges onto existing env, env replaces all of it")
+		}
+		if err := validateEnvKeys(in.AddEnv); err != nil {
+			return nil, ActionResult{}, err
+		}
+		if err := validateEnvKeys(in.Env); err != nil {
+			return nil, ActionResult{}, err
+		}
+		if err := validateEnvKeyList(in.RemoveEnv); err != nil {
+			return nil, ActionResult{}, err
+		}
+
 		m := &api.DeploymentDeploy{
 			Project:     project,
 			Location:    location,
@@ -122,6 +246,10 @@ func registerDeploymentDeploy(server *mcp.Server, adapter *jetder.Adapter) {
 			Image:       strings.TrimSpace(in.Image),
 			MinReplicas: in.MinReplicas,
 			MaxReplicas: in.MaxReplicas,
+			AddEnv:      in.AddEnv,
+			Env:         in.Env,
+			RemoveEnv:   in.RemoveEnv,
+			EnvGroups:   in.EnvGroups,
 		}
 		// pullSecret: NAME only (never credentials); validate BEFORE the deploy so a
 		// misplaced token/URL is rejected up front (no POST, nothing echoed). Omit
@@ -134,9 +262,12 @@ func registerDeploymentDeploy(server *mcp.Server, adapter *jetder.Adapter) {
 			m.PullSecret = &pullSecret
 		}
 		if _, err = adapter.Client().Deployment().Deploy(ctx, m); err != nil {
-			return nil, ActionResult{}, adapter.Redact(err)
+			// Defense in depth: scrub any env VALUE that an API error might reflect back.
+			return nil, ActionResult{}, adapter.RedactValues(err, envValues(in.AddEnv, in.Env)...)
 		}
-		res, out, err := actionResult(project, location, name, "deploy", "image="+strings.TrimSpace(in.Image))
+		// Summary echoes only KEY NAMES + counts — never any env value.
+		summary := "image=" + strings.TrimSpace(in.Image) + envKeySummary(in)
+		res, out, err := actionResult(project, location, name, "deploy", summary)
 		out.PullSecret = pullSecret // echo for verification (empty if not set)
 		return res, out, err
 	}

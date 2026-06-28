@@ -77,6 +77,11 @@ type DeploymentDeployPlanInput struct {
 	MinReplicas *int   `json:"minReplicas,omitempty" jsonschema:"minimum replicas"`
 	MaxReplicas *int   `json:"maxReplicas,omitempty" jsonschema:"maximum replicas"`
 	PullSecret  string `json:"pullSecret,omitempty" jsonschema:"name of an existing pull secret for private images"`
+	// Env mirrors deployment-deploy. VALUES ARE NEVER previewed — only key names.
+	AddEnv    map[string]string `json:"addEnv,omitempty" jsonschema:"env to add/merge (values are not previewed — only key names)"`
+	Env       map[string]string `json:"env,omitempty" jsonschema:"env to REPLACE all with (values are not previewed — only key names)"`
+	RemoveEnv []string          `json:"removeEnv,omitempty" jsonschema:"env var names to remove"`
+	EnvGroups []string          `json:"envGroups,omitempty" jsonschema:"env group names to attach"`
 }
 
 func registerDeploymentDeployPlan(server *mcp.Server, adapter *jetder.Adapter) {
@@ -121,6 +126,34 @@ func registerDeploymentDeployPlan(server *mcp.Server, adapter *jetder.Adapter) {
 		}
 		if pullSecret != "" {
 			out.RequestSummary = append(out.RequestSummary, "pullSecret(name)="+pullSecret)
+		}
+		// Env preview: KEY NAMES only — values are secrets and are never shown.
+		if len(in.AddEnv) > 0 && len(in.Env) > 0 {
+			out.Warnings = append(out.Warnings, "addEnv and env cannot be combined — the real deploy would reject this")
+		}
+		if len(in.AddEnv) > 0 {
+			keys, bad := safeEnvKeys(sortedKeys(in.AddEnv))
+			out.RequestSummary = append(out.RequestSummary, "addEnv keys=["+strings.Join(keys, ",")+"]")
+			out.SideEffectsIfExecuted = append(out.SideEffectsIfExecuted,
+				fmt.Sprintf("add/update %d environment variable(s)", len(in.AddEnv)))
+			if bad {
+				out.MissingPrereqs = append(out.MissingPrereqs, "an env name is malformed (e.g. contains '=') — the real deploy would reject it")
+			}
+		}
+		if len(in.Env) > 0 {
+			keys, bad := safeEnvKeys(sortedKeys(in.Env))
+			out.RequestSummary = append(out.RequestSummary, "env(replace) keys=["+strings.Join(keys, ",")+"]")
+			out.Warnings = append(out.Warnings, "env replaces ALL existing environment variables (use addEnv to merge instead)")
+			if bad {
+				out.MissingPrereqs = append(out.MissingPrereqs, "an env name is malformed (e.g. contains '=') — the real deploy would reject it")
+			}
+		}
+		if len(in.RemoveEnv) > 0 {
+			keys, _ := safeEnvKeys(in.RemoveEnv)
+			out.RequestSummary = append(out.RequestSummary, "removeEnv=["+strings.Join(keys, ",")+"]")
+		}
+		if len(in.EnvGroups) > 0 {
+			out.RequestSummary = append(out.RequestSummary, "envGroups=["+strings.Join(in.EnvGroups, ",")+"]")
 		}
 
 		// Read-only validation GET: does the named pull secret actually exist? (No
