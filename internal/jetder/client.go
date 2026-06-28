@@ -11,9 +11,13 @@
 package jetder
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -126,6 +130,128 @@ func New() (*Adapter, error) {
 // (Me(), Location(), Project(), Deployment(), Domain(), Route(), ...).
 func (a *Adapter) Client() *client.Client {
 	return a.client
+}
+
+// Creds returns the Basic-auth credential strings to scrub from any surfaced text
+// (token, username, base64 header). Used by the log sanitizer so a log line that
+// echoed our own credentials never reaches the client.
+func (a *Adapter) Creds() []string {
+	return []string{a.basicB64, a.token, a.user}
+}
+
+// apiHost returns the host of the configured Jetder API endpoint (used for the
+// same-origin SSRF check before attaching Basic auth to an outbound request).
+func (a *Adapter) apiHost() string {
+	ep := strings.TrimSpace(os.Getenv(EnvEndpoint))
+	if ep == "" {
+		ep = "https://api.jetder.com/"
+	}
+	if u, err := url.Parse(ep); err == nil {
+		return u.Host
+	}
+	return ""
+}
+
+// FetchURL performs a bounded GET of a Jetder-provided URL (e.g. a deployment's
+// logUrl, which carries its own short-lived JWT in the query string) and returns up
+// to maxBytes of the body plus whether it was truncated.
+//
+// Security:
+//   - It NEVER sends Basic auth (or any Authorization header). The log URL is
+//     self-authenticating via the JWT in its query string; sending our credentials
+//     to the log server (or anywhere) would be wrong and a leak risk.
+//   - SSRF guard: only http(s) URLs whose host is the configured API host or a
+//     *.jetder.com host are allowed; anything else is rejected. (Tests point
+//     JETDER_ENDPOINT at an httptest server, so that host is allowed too.)
+//   - The body is read through an io.LimitReader, so an enormous log can never be
+//     fully buffered. maxBytes must be > 0.
+//   - It never returns/echoes the URL — callers must not surface it (the query
+//     carries a token).
+func (a *Adapter) FetchURL(ctx context.Context, rawURL string, maxBytes int64) (body []byte, truncated bool, err error) {
+	if maxBytes <= 0 {
+		return nil, false, errors.New("maxBytes must be positive")
+	}
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+		// Never echo the URL (it can carry a token in the query).
+		return nil, false, errors.New("invalid log URL (must be http(s) with a host)")
+	}
+	if !a.allowedLogHost(u.Host) {
+		return nil, false, errors.New("refusing to fetch log from an unexpected host")
+	}
+	// The URL's query carries a credential — require HTTPS so it isn't sent in the
+	// clear. The ONLY exception is when the configured API endpoint is itself http
+	// (a local/test endpoint) and the URL targets that same host.
+	if u.Scheme != "https" && !a.isHTTPEndpointHost(u.Host) {
+		return nil, false, errors.New("refusing to fetch log over plaintext http")
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, false, errors.New("could not build request")
+	}
+	req.Header.Set("Accept", "text/plain")
+	// NO Authorization header: the URL's JWT is the auth. Do not attach credentials.
+
+	resp, err := a.httpClient().Do(req)
+	if err != nil {
+		return nil, false, errors.New("request failed")
+	}
+	defer func() { _, _ = io.Copy(io.Discard, resp.Body); _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, false, fmt.Errorf("log server returned status %d", resp.StatusCode)
+	}
+
+	// Read at most maxBytes+1 so we can detect truncation without buffering more.
+	limited := io.LimitReader(resp.Body, maxBytes+1)
+	b, err := io.ReadAll(limited)
+	if err != nil {
+		return nil, false, errors.New("could not read response")
+	}
+	if int64(len(b)) > maxBytes {
+		return b[:maxBytes], true, nil
+	}
+	return b, false, nil
+}
+
+// AllowedLogHostForTest exposes allowedLogHost for tests in the parent package.
+func (a *Adapter) AllowedLogHostForTest(host string) bool { return a.allowedLogHost(host) }
+
+// isHTTPEndpointHost reports whether the configured JETDER_ENDPOINT uses http (not
+// https) AND its host matches the given host. This is the only case where a
+// plaintext-http log fetch is permitted — a local/httptest endpoint.
+func (a *Adapter) isHTTPEndpointHost(host string) bool {
+	ep := strings.TrimSpace(os.Getenv(EnvEndpoint))
+	if ep == "" {
+		return false // default endpoint is https
+	}
+	u, err := url.Parse(ep)
+	if err != nil || u.Scheme != "http" {
+		return false
+	}
+	return strings.EqualFold(u.Host, host)
+}
+
+// allowedLogHost reports whether host is acceptable for a log fetch: the configured
+// API host (so httptest endpoints work in tests) or any *.jetder.com host.
+func (a *Adapter) allowedLogHost(host string) bool {
+	h := strings.ToLower(host)
+	if ah := a.apiHost(); ah != "" && h == strings.ToLower(ah) {
+		return true
+	}
+	// Strip a port if present for the suffix check.
+	if i := strings.LastIndex(h, ":"); i != -1 {
+		h = h[:i]
+	}
+	return h == "jetder.com" || strings.HasSuffix(h, ".jetder.com")
+}
+
+// httpClient returns the adapter's HTTP client (or a default).
+func (a *Adapter) httpClient() *http.Client {
+	if a.client != nil && a.client.HTTPClient != nil {
+		return a.client.HTTPClient
+	}
+	return &http.Client{Timeout: 30 * time.Second}
 }
 
 // Redact removes any occurrence of the Basic-auth credentials — the password
