@@ -241,6 +241,44 @@ func (a *Adapter) FetchLogSnapshot(ctx context.Context, rawURL string, maxBytes 
 	return readBoundedLog(cctx, resp.Body, isSSE, maxBytes, maxEvents, cancel)
 }
 
+// FetchJSON does a bounded GET of a Jetder-provided JSON URL (e.g. a deployment's
+// eventUrl / statusUrl — finite application/json responses, unlike the SSE logUrl)
+// and returns up to maxBytes of the body. It reuses the same security guards as the
+// log fetch (no Authorization header, SSRF host guard, HTTPS required for jetder
+// hosts) and never echoes the URL. Because these endpoints close on their own, a
+// simple capped ReadAll is safe (no streaming reader needed).
+func (a *Adapter) FetchJSON(ctx context.Context, rawURL string, maxBytes int64) (body []byte, truncated bool, err error) {
+	if maxBytes <= 0 {
+		return nil, false, errors.New("maxBytes must be positive")
+	}
+	cctx, cancel := context.WithTimeout(ctx, logOverallTimeout)
+	defer cancel()
+
+	req, err := a.buildLogRequest(cctx, rawURL)
+	if err != nil {
+		return nil, false, err
+	}
+	req.Header.Set("Accept", "application/json")
+	resp, err := a.httpClient().Do(req)
+	if err != nil {
+		return nil, false, errors.New("request failed")
+	}
+	defer func() { _, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096)); _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 8*1024))
+		return nil, false, fmt.Errorf("status %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
+	}
+
+	b, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
+	if err != nil {
+		return nil, false, errors.New("could not read response")
+	}
+	if int64(len(b)) > maxBytes {
+		return b[:maxBytes], true, nil
+	}
+	return b, false, nil
+}
+
 // readBoundedLog reads lines from r until a cap (maxBytes raw wire bytes / maxEvents),
 // the stream goes idle (no new line for logIdleTimeout after at least one), or ctx is
 // done — then returns. SSE framing/JSON is unwrapped when sse is true. cancel is
