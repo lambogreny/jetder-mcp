@@ -304,6 +304,9 @@ mcp/
 
 - **[docs/ONBOARDING.md](./docs/ONBOARDING.md) — new here?** a friendly,
   start-from-zero guide: what this is, what you need, install in 3 steps, first run.
+- **[docs/TEAM-ROLLOUT.md](./docs/TEAM-ROLLOUT.md) — rolling out to a team?** a
+  DevOps playbook: phased pilot → standardize → CI/CD, per-engineer setup, security
+  & governance, and a rollout checklist.
 - **[docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) — the big picture:** what the
   server does, how it connects to Jetder / Cloudflare / GHCR, flow diagrams, the full
   capability list, and the security model.
