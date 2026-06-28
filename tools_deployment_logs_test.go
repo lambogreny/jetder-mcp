@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -197,12 +199,12 @@ func TestFetchURL_SSRF_Reject(t *testing.T) {
 	srv := logTestServer(t, "ok", 200, nil)
 	a := logsAdapter(t, srv) // apiHost = srv host
 	// A different host (not the API host, not *.jetder.com) must be refused.
-	_, _, err := a.FetchURL(context.Background(), "https://evil.example.com/logs?t=x", 1024)
+	_, err := a.FetchLogSnapshot(context.Background(), "https://evil.example.com/logs?t=x", 1024, 100)
 	if err == nil {
 		t.Fatal("expected SSRF rejection for an unexpected host")
 	}
 	// And a non-http scheme.
-	if _, _, err := a.FetchURL(context.Background(), "file:///etc/passwd", 1024); err == nil {
+	if _, err := a.FetchLogSnapshot(context.Background(), "file:///etc/passwd", 1024, 100); err == nil {
 		t.Fatal("expected rejection for non-http scheme")
 	}
 }
@@ -283,12 +285,12 @@ func TestFetchURL_RequiresHTTPS_ForJetderHost(t *testing.T) {
 	srv := logTestServer(t, "ok", 200, nil)
 	a := logsAdapter(t, srv) // JETDER_ENDPOINT = srv (http httptest) → same-host http allowed
 	// http to a real *.jetder.com host (NOT the http endpoint host) → reject.
-	if _, _, err := a.FetchURL(context.Background(), "http://log.cluster-1.jetder.com/logs?t=x", 1024); err == nil {
+	if _, err := a.FetchLogSnapshot(context.Background(), "http://log.cluster-1.jetder.com/logs?t=x", 1024, 100); err == nil {
 		t.Fatal("plaintext http to a jetder host must be rejected")
 	}
 	// https to the same host → allowed past the scheme guard (will fail at dial, but
 	// not with our scheme error).
-	_, _, err := a.FetchURL(context.Background(), "https://log.cluster-1.jetder.com/logs?t=x", 1024)
+	_, err := a.FetchLogSnapshot(context.Background(), "https://log.cluster-1.jetder.com/logs?t=x", 1024, 100)
 	if err != nil && strings.Contains(err.Error(), "plaintext") {
 		t.Fatalf("https must pass the scheme guard, got %v", err)
 	}
@@ -337,5 +339,176 @@ func TestDeploymentLogs_RevisionPassed(t *testing.T) {
 	callLogs(t, a, map[string]any{"name": "web", "revision": float64(7)})
 	if gotRevision != 7 {
 		t.Fatalf("revision = %d, want 7 (not passed to deployment.get)", gotRevision)
+	}
+}
+
+// --- SSE bounded snapshot tests ----------------------------------------------
+
+// sseServer answers deployment.get + an SSE /logs endpoint that emits the given raw
+// SSE text, then (if block) hangs without closing — simulating the real log server.
+func sseServer(t *testing.T, sse string, block bool) *httptest.Server {
+	t.Helper()
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/logs"):
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte(sse))
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+			if block {
+				<-r.Context().Done() // hang until the client closes the connection.
+			}
+		case strings.HasSuffix(r.URL.Path, "deployment.get"):
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, `{"ok":true,"result":{"name":"web","logUrl":%q}}`, srv.URL+"/logs?t=SECRET-JWT-abc123")
+		default:
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"ok":true,"result":{}}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// A never-closing SSE stream must return a bounded snapshot quickly (idle timeout),
+// parsing data: {json} into clean lines.
+func TestDeploymentLogs_SSE_NeverClosing_ReturnsFast(t *testing.T) {
+	restore := jetder.SetLogTimeoutsForTest(80*time.Millisecond, 3*time.Second)
+	defer restore()
+
+	sse := `data: {"timestamp":"2026-01-02T03:04:05Z","log":"npm WARN config"}` + "\n\n" +
+		`data: {"timestamp":"2026-01-02T03:04:06Z","log":"server started"}` + "\n\n"
+	srv := sseServer(t, sse, true)
+	a := logsAdapter(t, srv)
+
+	start := time.Now()
+	sc := callLogs(t, a, map[string]any{"name": "web"})
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("never-closing stream took too long (%v) — idle timeout not working", elapsed)
+	}
+	if tr, _ := sc["streamSnapshot"].(bool); !tr {
+		t.Fatalf("streamSnapshot should be true for SSE: %v", sc)
+	}
+	logs, _ := sc["logs"].(string)
+	if !strings.Contains(logs, "npm WARN config") || !strings.Contains(logs, "server started") {
+		t.Fatalf("SSE log not parsed: %q", logs)
+	}
+	if !strings.Contains(logs, "[2026-01-02T03:04:05Z]") {
+		t.Fatalf("expected timestamp prefix: %q", logs)
+	}
+	if strings.Contains(logs, "data:") || strings.Contains(logs, `"log":`) {
+		t.Fatalf("raw SSE/JSON framing leaked into output: %q", logs)
+	}
+}
+
+// Invalid-JSON SSE data falls back to the raw payload (still sanitized).
+func TestDeploymentLogs_SSE_InvalidJSON_Fallback(t *testing.T) {
+	restore := jetder.SetLogTimeoutsForTest(80*time.Millisecond, 3*time.Second)
+	defer restore()
+	sse := "data: this is not json\n\ndata: plain line two\n\n"
+	srv := sseServer(t, sse, true)
+	a := logsAdapter(t, srv)
+	sc := callLogs(t, a, map[string]any{"name": "web"})
+	logs, _ := sc["logs"].(string)
+	if !strings.Contains(logs, "this is not json") || !strings.Contains(logs, "plain line two") {
+		t.Fatalf("invalid-JSON fallback failed: %q", logs)
+	}
+}
+
+// A secret inside the JSON .log field must be redacted (after unwrap).
+func TestDeploymentLogs_SSE_RedactsSecretInJSONLog(t *testing.T) {
+	restore := jetder.SetLogTimeoutsForTest(80*time.Millisecond, 3*time.Second)
+	defer restore()
+	sse := `data: {"log":"connecting with password=hunter2supersecret"}` + "\n\n" +
+		`data: {"log":"token is ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}` + "\n\n" +
+		`data: {"log":"normal line"}` + "\n\n"
+	srv := sseServer(t, sse, true)
+	a := logsAdapter(t, srv)
+	sc := callLogs(t, a, map[string]any{"name": "web"})
+	logs, _ := sc["logs"].(string)
+	for _, secret := range []string{"hunter2supersecret", "ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"} {
+		if strings.Contains(logs, secret) {
+			t.Fatalf("SSE JSON sanitizer leaked %q:\n%s", secret, logs)
+		}
+	}
+	if !strings.Contains(logs, "normal line") {
+		t.Fatalf("over-redacted: %q", logs)
+	}
+}
+
+// SSE allows multiple data: lines per event — they must be joined (not split into
+// separate log lines) and dispatched on the blank line.
+func TestDeploymentLogs_SSE_MultiLineData(t *testing.T) {
+	restore := jetder.SetLogTimeoutsForTest(80*time.Millisecond, 3*time.Second)
+	defer restore()
+	// One event with two data: lines, then another single-line event.
+	sse := "data: line A part 1\ndata: line A part 2\n\ndata: second event\n\n"
+	srv := sseServer(t, sse, true)
+	a := logsAdapter(t, srv)
+	sc := callLogs(t, a, map[string]any{"name": "web"})
+	logs, _ := sc["logs"].(string)
+	// The two data: lines of event 1 join into ONE log line (joined with \n).
+	if !strings.Contains(logs, "line A part 1\nline A part 2") {
+		t.Fatalf("multi-line data not joined into one event: %q", logs)
+	}
+	if !strings.Contains(logs, "second event") {
+		t.Fatalf("second event missing: %q", logs)
+	}
+	// lineCount: event1 (multi-line, counts as 1 parsed event but its joined text has
+	// an embedded newline) + event2. tailLinesSlice splits the joined text on \n when
+	// rendering, so just assert both payloads present and no raw "data:" framing.
+	if strings.Contains(logs, "data:") {
+		t.Fatalf("raw SSE framing leaked: %q", logs)
+	}
+}
+
+// A never-closing stream must NOT leak the log-reader producer goroutine after the
+// tool returns. We count goroutines parked specifically in readBoundedLog (the
+// producer) — other harness goroutines (httptest conns, in-memory MCP sessions) are
+// expected to linger in-test and aren't what this guards.
+func TestDeploymentLogs_SSE_NoGoroutineLeak(t *testing.T) {
+	restore := jetder.SetLogTimeoutsForTest(60*time.Millisecond, 2*time.Second)
+	defer restore()
+	// Emit many events fast (fills the channel) then block forever — the consumer
+	// stops at maxEvents/idle while the producer is mid-send.
+	var b strings.Builder
+	for i := 0; i < 400; i++ {
+		fmt.Fprintf(&b, "data: {\"log\":\"line %d\"}\n\n", i)
+	}
+	srv := sseServer(t, b.String(), true)
+	a := logsAdapter(t, srv)
+
+	for i := 0; i < 5; i++ {
+		_ = callLogs(t, a, map[string]any{"name": "web", "tailLines": float64(5)})
+	}
+	// Give any leaked producers a chance to (fail to) exit, then sample stacks.
+	time.Sleep(400 * time.Millisecond)
+	runtime.GC()
+	buf := make([]byte, 1<<20)
+	stacks := string(buf[:runtime.Stack(buf, true)])
+	if n := strings.Count(stacks, "jetder.readBoundedLog"); n > 0 {
+		t.Fatalf("producer goroutine leak: %d readBoundedLog goroutine(s) still alive", n)
+	}
+}
+
+// maxEvents caps the number of parsed lines and sets truncated.
+func TestDeploymentLogs_SSE_MaxEventsTruncate(t *testing.T) {
+	restore := jetder.SetLogTimeoutsForTest(80*time.Millisecond, 3*time.Second)
+	defer restore()
+	var b strings.Builder
+	for i := 0; i < 500; i++ {
+		fmt.Fprintf(&b, "data: {\"log\":\"line %d\"}\n\n", i)
+	}
+	srv := sseServer(t, b.String(), true)
+	a := logsAdapter(t, srv)
+	sc := callLogs(t, a, map[string]any{"name": "web", "tailLines": float64(10)})
+	if tr, _ := sc["truncated"].(bool); !tr {
+		t.Fatalf("expected truncated=true with 500 events")
+	}
+	if c, _ := sc["lineCount"].(float64); c != 10 {
+		t.Fatalf("tail should cap to 10 lines, got %v", sc["lineCount"])
 	}
 }

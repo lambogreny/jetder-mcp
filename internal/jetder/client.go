@@ -11,8 +11,10 @@
 package jetder
 
 import (
+	"bufio"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -152,66 +154,303 @@ func (a *Adapter) apiHost() string {
 	return ""
 }
 
-// FetchURL performs a bounded GET of a Jetder-provided URL (e.g. a deployment's
-// logUrl, which carries its own short-lived JWT in the query string) and returns up
-// to maxBytes of the body plus whether it was truncated.
-//
-// Security:
-//   - It NEVER sends Basic auth (or any Authorization header). The log URL is
-//     self-authenticating via the JWT in its query string; sending our credentials
-//     to the log server (or anywhere) would be wrong and a leak risk.
+// Log-snapshot read bounds. These are vars (not consts) so tests can shrink them to
+// avoid real waits; they are NOT exposed as tool arguments.
+var (
+	logIdleTimeout    = 2 * time.Second
+	logOverallTimeout = 10 * time.Second
+)
+
+// buildLogRequest validates a Jetder-provided log URL and builds a GET request for
+// it. SECURITY (shared by every log fetch path):
+//   - NEVER attach Basic auth / any Authorization header — the URL's JWT is the auth.
 //   - SSRF guard: only http(s) URLs whose host is the configured API host or a
-//     *.jetder.com host are allowed; anything else is rejected. (Tests point
-//     JETDER_ENDPOINT at an httptest server, so that host is allowed too.)
-//   - The body is read through an io.LimitReader, so an enormous log can never be
-//     fully buffered. maxBytes must be > 0.
-//   - It never returns/echoes the URL — callers must not surface it (the query
-//     carries a token).
-func (a *Adapter) FetchURL(ctx context.Context, rawURL string, maxBytes int64) (body []byte, truncated bool, err error) {
-	if maxBytes <= 0 {
-		return nil, false, errors.New("maxBytes must be positive")
-	}
+//     *.jetder.com host are allowed.
+//   - HTTPS is required for jetder hosts (the query carries a credential); plaintext
+//     http is allowed only when JETDER_ENDPOINT is itself http and targets that host.
+//   - The URL is never echoed by callers (the query carries a token).
+func (a *Adapter) buildLogRequest(ctx context.Context, rawURL string) (*http.Request, error) {
 	u, err := url.Parse(strings.TrimSpace(rawURL))
 	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
-		// Never echo the URL (it can carry a token in the query).
-		return nil, false, errors.New("invalid log URL (must be http(s) with a host)")
+		return nil, errors.New("invalid log URL (must be http(s) with a host)")
 	}
 	if !a.allowedLogHost(u.Host) {
-		return nil, false, errors.New("refusing to fetch log from an unexpected host")
+		return nil, errors.New("refusing to fetch log from an unexpected host")
 	}
-	// The URL's query carries a credential — require HTTPS so it isn't sent in the
-	// clear. The ONLY exception is when the configured API endpoint is itself http
-	// (a local/test endpoint) and the URL targets that same host.
 	if u.Scheme != "https" && !a.isHTTPEndpointHost(u.Host) {
-		return nil, false, errors.New("refusing to fetch log over plaintext http")
+		return nil, errors.New("refusing to fetch log over plaintext http")
 	}
-
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
-		return nil, false, errors.New("could not build request")
+		return nil, errors.New("could not build request")
 	}
-	req.Header.Set("Accept", "text/plain")
-	// NO Authorization header: the URL's JWT is the auth. Do not attach credentials.
+	req.Header.Set("Accept", "text/event-stream, text/plain")
+	// NO Authorization header.
+	return req, nil
+}
 
+// LogSnapshot is the result of a bounded log read.
+type LogSnapshot struct {
+	// Lines are the parsed, human-readable log lines (SSE framing/JSON unwrapped).
+	Lines []string
+	// Truncated is true when reading stopped at a cap (bytes/events) rather than EOF.
+	Truncated bool
+	// Stream is true when the source was an SSE stream (text/event-stream).
+	Stream bool
+}
+
+// FetchLogSnapshot reads a BOUNDED snapshot of a log URL. The Jetder log server is
+// an SSE stream that never closes, so we cannot download it — we read until the
+// first of: maxBytes (raw wire bytes) reached, maxEvents reached, the stream goes
+// idle (no new data for logIdleTimeout after at least one event), or the overall
+// deadline (logOverallTimeout) — then close the connection ourselves.
+//
+// Routing is by Content-Type: text/event-stream → SSE parser (unwrap data: {json});
+// anything else → bounded plain-text reader. Neither path sends credentials.
+func (a *Adapter) FetchLogSnapshot(ctx context.Context, rawURL string, maxBytes int64, maxEvents int) (*LogSnapshot, error) {
+	if maxBytes <= 0 {
+		return nil, errors.New("maxBytes must be positive")
+	}
+	if maxEvents <= 0 {
+		maxEvents = 200
+	}
+
+	// Overall deadline guards against a hang regardless of the caller's ctx.
+	cctx, cancel := context.WithTimeout(ctx, logOverallTimeout)
+	defer cancel()
+
+	req, err := a.buildLogRequest(cctx, rawURL)
+	if err != nil {
+		return nil, err
+	}
 	resp, err := a.httpClient().Do(req)
 	if err != nil {
-		return nil, false, errors.New("request failed")
+		return nil, errors.New("request failed")
 	}
-	defer func() { _, _ = io.Copy(io.Discard, resp.Body); _ = resp.Body.Close() }()
+	// Do NOT drain the body on exit — it may be a never-ending stream, so draining
+	// would hang. Cancelling the request context + Close() tears the connection down.
+	defer func() { cancel(); _ = resp.Body.Close() }()
+
 	if resp.StatusCode != http.StatusOK {
-		return nil, false, fmt.Errorf("log server returned status %d", resp.StatusCode)
+		// Read a small capped slice of the error body (not the whole stream).
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 8*1024))
+		return nil, fmt.Errorf("log server returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
 	}
 
-	// Read at most maxBytes+1 so we can detect truncation without buffering more.
-	limited := io.LimitReader(resp.Body, maxBytes+1)
-	b, err := io.ReadAll(limited)
-	if err != nil {
-		return nil, false, errors.New("could not read response")
+	isSSE := strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "text/event-stream")
+	return readBoundedLog(cctx, resp.Body, isSSE, maxBytes, maxEvents, cancel)
+}
+
+// readBoundedLog reads lines from r until a cap (maxBytes raw wire bytes / maxEvents),
+// the stream goes idle (no new line for logIdleTimeout after at least one), or ctx is
+// done — then returns. SSE framing/JSON is unwrapped when sse is true. cancel is
+// invoked to release the request once we stop reading.
+func readBoundedLog(ctx context.Context, r io.Reader, sse bool, maxBytes int64, maxEvents int, cancel context.CancelFunc) (*LogSnapshot, error) {
+	type lineMsg struct {
+		raw  string
+		err  error
+		done bool // [DONE] sentinel
 	}
-	if int64(len(b)) > maxBytes {
-		return b[:maxBytes], true, nil
+	ch := make(chan lineMsg, 64)
+	// stop signals the producer to exit when the consumer returns early, so the
+	// producer never blocks forever on a channel send (goroutine-leak guard).
+	stop := make(chan struct{})
+
+	// Producer: scan lines, counting RAW wire bytes against maxBytes. For SSE it
+	// accumulates the (possibly multi-line) data: payloads of one event and emits on
+	// the blank dispatch line. Every send is select-guarded on stop.
+	go func() {
+		defer close(ch)
+		sc := bufio.NewScanner(io.LimitReader(r, maxBytes+1))
+		sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		var read int64
+		var event []string // accumulated data: lines for the current SSE event
+
+		send := func(m lineMsg) bool {
+			select {
+			case ch <- m:
+				return true
+			case <-stop:
+				return false
+			}
+		}
+		// flush emits the accumulated SSE event (joined per spec) and resets it.
+		flush := func() bool {
+			if len(event) == 0 {
+				return true
+			}
+			payload := strings.Join(event, "\n")
+			event = event[:0]
+			if strings.TrimSpace(payload) == "[DONE]" {
+				send(lineMsg{done: true})
+				return false
+			}
+			return send(lineMsg{raw: payload})
+		}
+
+		for sc.Scan() {
+			line := sc.Text()
+			read += int64(len(line)) + 1
+			if sse {
+				if line == "" { // blank line dispatches the event
+					if !flush() {
+						return
+					}
+				} else if payload, ok := sseData(line); ok {
+					event = append(event, payload) // multi-line data: accumulate
+				}
+				// non-data framing (event:/id:/comments) is ignored
+			} else {
+				if !send(lineMsg{raw: line}) {
+					return
+				}
+			}
+			if read > maxBytes {
+				send(lineMsg{err: errTruncated})
+				return
+			}
+		}
+		// EOF: flush any pending SSE event (a stream that ended without a final blank).
+		if sse && !flush() {
+			return
+		}
+		if err := sc.Err(); err != nil {
+			send(lineMsg{err: err})
+		}
+	}()
+
+	// Ensure the producer is always released, even on an early return path: closing
+	// stop unblocks a producer parked on a channel send, and cancel() tears down the
+	// connection to unblock one parked in sc.Scan() on a never-closing stream.
+	defer func() { cancel(); close(stop) }()
+
+	out := &LogSnapshot{Stream: sse}
+	idle := time.NewTimer(logOverallTimeout) // before the first event, wait the overall budget
+	defer idle.Stop()
+	gotOne := false
+
+	for {
+		select {
+		case <-ctx.Done():
+			cancel()
+			out.Truncated = out.Truncated || !gotOne
+			return finishLog(out, gotOne)
+		case <-idle.C:
+			// Idle (or overall budget hit before any event) → stop, snapshot what we have.
+			cancel()
+			return finishLog(out, gotOne)
+		case m, ok := <-ch:
+			if !ok {
+				return finishLog(out, gotOne) // EOF: stream closed on its own.
+			}
+			if m.done {
+				return finishLog(out, gotOne)
+			}
+			if m.err != nil {
+				if m.err == errTruncated {
+					out.Truncated = true
+				}
+				return finishLog(out, gotOne)
+			}
+			out.Lines = append(out.Lines, normalizeLogLine(m.raw, sse))
+			gotOne = true
+			if len(out.Lines) >= maxEvents {
+				out.Truncated = true
+				cancel()
+				return finishLog(out, gotOne)
+			}
+			// Reset to the (shorter) idle timeout now that we've seen an event.
+			if !idle.Stop() {
+				select {
+				case <-idle.C:
+				default:
+				}
+			}
+			idle.Reset(logIdleTimeout)
+		}
 	}
-	return b, false, nil
+}
+
+var errTruncated = errors.New("truncated")
+
+func finishLog(out *LogSnapshot, gotOne bool) (*LogSnapshot, error) {
+	if !gotOne && len(out.Lines) == 0 {
+		return nil, errors.New("no log events received before timeout")
+	}
+	return out, nil
+}
+
+// sseData returns the payload of a `data:` SSE line (false for non-data lines).
+func sseData(line string) (string, bool) {
+	if strings.HasPrefix(line, "data:") {
+		return strings.TrimPrefix(strings.TrimPrefix(line, "data:"), " "), true
+	}
+	return "", false
+}
+
+// normalizeLogLine turns a raw line (an SSE data payload, or a plain log line) into
+// a human-readable "[ts] log" form. If it's JSON with a known log field, the message
+// is extracted (and timestamp/level prefixed when present); otherwise the raw payload
+// is kept verbatim. The result is NOT yet sanitized — the caller does that.
+func normalizeLogLine(raw string, sse bool) string {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return ""
+	}
+	// Only attempt JSON unwrap when it looks like a JSON object.
+	if strings.HasPrefix(s, "{") {
+		var m map[string]any
+		if err := json.Unmarshal([]byte(s), &m); err == nil {
+			// Recognized log envelope (has a log/message/... key, even if empty)?
+			if _, hasMsg := firstKey(m, "log", "message", "msg", "text"); hasMsg {
+				msg := firstString(m, "log", "message", "msg", "text")
+				if strings.TrimSpace(msg) == "" {
+					return "" // empty log frame → dropped by the tail filter.
+				}
+				ts := firstString(m, "timestamp", "time", "ts")
+				lvl := firstString(m, "level")
+				prefix := ""
+				if ts != "" {
+					prefix += "[" + ts + "] "
+				}
+				if lvl != "" {
+					prefix += lvl + " "
+				}
+				return prefix + strings.TrimRight(msg, "\n")
+			}
+		}
+	}
+	return s
+}
+
+// firstKey reports the first present key among keys (regardless of value).
+func firstKey(m map[string]any, keys ...string) (string, bool) {
+	for _, k := range keys {
+		if _, ok := m[k]; ok {
+			return k, true
+		}
+	}
+	return "", false
+}
+
+// firstString returns the first non-empty string value among the given keys.
+func firstString(m map[string]any, keys ...string) string {
+	for _, k := range keys {
+		if v, ok := m[k]; ok {
+			if s, ok := v.(string); ok && s != "" {
+				return s
+			}
+		}
+	}
+	return ""
+}
+
+// SetLogTimeoutsForTest shrinks the snapshot read deadlines so tests don't wait the
+// real (seconds-long) idle/overall budgets. Tests should restore the originals.
+func SetLogTimeoutsForTest(idle, overall time.Duration) (restore func()) {
+	oi, oo := logIdleTimeout, logOverallTimeout
+	logIdleTimeout, logOverallTimeout = idle, overall
+	return func() { logIdleTimeout, logOverallTimeout = oi, oo }
 }
 
 // AllowedLogHostForTest exposes allowedLogHost for tests in the parent package.

@@ -52,7 +52,10 @@ type DeploymentLogsOutput struct {
 	Source    string `json:"source" jsonschema:"where the logs came from (always \"logUrl\")"`
 	Logs      string `json:"logs" jsonschema:"the (best-effort sanitized) log text, last tailLines lines"`
 	LineCount int    `json:"lineCount" jsonschema:"number of log lines returned"`
-	Truncated bool   `json:"truncated" jsonschema:"true if the log exceeded the byte cap and was cut"`
+	Truncated bool   `json:"truncated" jsonschema:"true if reading stopped at a cap (bytes/events) rather than the end"`
+	// StreamSnapshot is true when the source was a live log stream — the result is a
+	// point-in-time snapshot, not the complete history.
+	StreamSnapshot bool `json:"streamSnapshot" jsonschema:"true if the logs came from a live stream (a snapshot, not the full history)"`
 }
 
 func registerDeploymentLogs(server *mcp.Server, adapter *jetder.Adapter, cf *cloudflare.Client) {
@@ -74,9 +77,10 @@ func registerDeploymentLogs(server *mcp.Server, adapter *jetder.Adapter, cf *clo
 			return nil, DeploymentLogsOutput{}, fmt.Errorf("deployment %q has no log URL yet (is it deployed and running?)", name)
 		}
 
-		// 2) Fetch a bounded snapshot (no credentials sent; host-guarded; capped).
-		// maxBytes: <=0 => default; clamp to the hard max. The LimitReader still
-		// enforces the cap inside FetchURL.
+		// 2) Read a BOUNDED snapshot. The Jetder log server is an SSE stream that
+		// never closes, so FetchLogSnapshot reads until a cap / idle / overall
+		// deadline, parses the data: {json} frames, and returns parsed lines. No
+		// credentials are ever sent; maxBytes bounds the RAW wire read.
 		maxBytes := in.MaxBytes
 		if maxBytes <= 0 {
 			maxBytes = logsMaxBytesDefault
@@ -84,15 +88,6 @@ func registerDeploymentLogs(server *mcp.Server, adapter *jetder.Adapter, cf *clo
 		if maxBytes > logsMaxBytesMax {
 			maxBytes = logsMaxBytesMax
 		}
-		raw, truncated, err := adapter.FetchURL(ctx, logURL, maxBytes)
-		if err != nil {
-			// Defense in depth: scrub the logUrl/JWT from any fetch error too.
-			return nil, DeploymentLogsOutput{}, sanitizeErr(adapter, logURL, err)
-		}
-
-		// 3) Sanitize (best-effort) + take the tail. Pass logURL so the body can
-		// never echo our own log URL / its JWT back to the client.
-		clean := sanitizeLog(adapter, string(raw), logURL)
 		tail := in.TailLines
 		if tail <= 0 {
 			tail = logsTailDefault
@@ -100,7 +95,27 @@ func registerDeploymentLogs(server *mcp.Server, adapter *jetder.Adapter, cf *clo
 		if tail > logsTailMax {
 			tail = logsTailMax
 		}
-		logs, lineCount := tailLines(clean, tail)
+		maxEvents := tail * 2
+		if maxEvents < 200 {
+			maxEvents = 200
+		}
+		if maxEvents > 2000 {
+			maxEvents = 2000
+		}
+
+		snap, err := adapter.FetchLogSnapshot(ctx, logURL, maxBytes, maxEvents)
+		if err != nil {
+			// Defense in depth: scrub the logUrl/JWT from any fetch error too.
+			return nil, DeploymentLogsOutput{}, sanitizeErr(adapter, logURL, err)
+		}
+
+		// 3) Sanitize each parsed line (best-effort), then take the tail. logURL is
+		// passed so a line that echoed our own log URL/JWT is scrubbed.
+		clean := make([]string, 0, len(snap.Lines))
+		for _, ln := range snap.Lines {
+			clean = append(clean, sanitizeLog(adapter, ln, logURL))
+		}
+		logs, lineCount := tailLinesSlice(clean, tail)
 
 		out := DeploymentLogsOutput{
 			ResolvedContext: ResolvedContext{ResolvedProject: project, ResolvedLocation: location},
@@ -108,10 +123,11 @@ func registerDeploymentLogs(server *mcp.Server, adapter *jetder.Adapter, cf *clo
 			Source:          "logUrl",
 			Logs:            logs,
 			LineCount:       lineCount,
-			Truncated:       truncated,
+			Truncated:       snap.Truncated,
+			StreamSnapshot:  snap.Stream,
 		}
 		summary := fmt.Sprintf("%d log line(s) for %s [project=%s]", lineCount, name, project)
-		if truncated {
+		if snap.Truncated {
 			summary += " (truncated)"
 		}
 		return textResult(summary), out, nil
@@ -228,15 +244,17 @@ func sanitizeErr(adapter *jetder.Adapter, logURL string, err error) error {
 	return fmt.Errorf("%s", sanitizeLog(adapter, err.Error(), logURL))
 }
 
-// tailLines returns the last n lines of s (and the count returned).
-func tailLines(s string, n int) (string, int) {
-	s = strings.TrimRight(s, "\n")
-	if s == "" {
-		return "", 0
+// tailLinesSlice returns the last n non-empty lines joined (and the count). Empty
+// lines (e.g. blank log frames) are dropped so the output is tidy.
+func tailLinesSlice(lines []string, n int) (string, int) {
+	out := make([]string, 0, len(lines))
+	for _, l := range lines {
+		if strings.TrimSpace(l) != "" {
+			out = append(out, l)
+		}
 	}
-	lines := strings.Split(s, "\n")
-	if n < len(lines) {
-		lines = lines[len(lines)-n:]
+	if n < len(out) {
+		out = out[len(out)-n:]
 	}
-	return strings.Join(lines, "\n"), len(lines)
+	return strings.Join(out, "\n"), len(out)
 }
