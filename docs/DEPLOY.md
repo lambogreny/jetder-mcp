@@ -122,6 +122,24 @@ through.
   `JETDER_DEFAULT_LOCATION` and call the MCP tools directly — but CI always uses
   explicit args.)
 
+## Build for the right architecture (linux/amd64)
+
+The Jetder cluster runs **linux/amd64**. Your container image MUST be built for that
+architecture. This bites people who build on **Apple Silicon (Mac M1/M2/M3)**: Docker
+defaults to **arm64** there, so the image builds and pushes fine but the pod
+**crash-loops with `exec format error`** at runtime.
+
+Always build for amd64:
+
+```sh
+docker build --platform linux/amd64 -t <image> .
+# or, with buildx:
+docker buildx build --platform linux/amd64 -t <image> --push .
+```
+
+If a deployment is crash-looping, run **`deployment-diagnose`** — the Deploy Doctor
+flags `ArchitectureMismatch` (from `exec format error`) and tells you exactly this.
+
 ## Notes
 
 - `jetder-mcp` is the deploy *driver*; it does not need to be containerized to run

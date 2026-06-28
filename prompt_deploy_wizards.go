@@ -79,7 +79,11 @@ func deployAnAppHandler(_ context.Context, req *mcp.GetPromptRequest) (*mcp.GetP
 	b.WriteString("the sample's scripts/deploy.sh — see docs/GETTING-STARTED.md). If you do NOT yet\n")
 	b.WriteString("have a pushed image ref, STOP and do the local build/push first.\n")
 	b.WriteString("If you ran scripts/deploy.sh, it ALREADY deployed — do not deploy again here;\n")
-	b.WriteString("skip to the verify step and just read the URL.\n\n")
+	b.WriteString("skip to the verify step and just read the URL.\n")
+	b.WriteString("ARCHITECTURE — the image MUST be built for linux/amd64 (the cluster's arch).\n")
+	b.WriteString("If you built on Apple Silicon (Mac M1/M2/M3), Docker defaults to arm64 and the\n")
+	b.WriteString("pod will crash-loop with \"exec format error\". Build with\n")
+	b.WriteString("`docker build --platform linux/amd64 ...` (or buildx) before pushing.\n\n")
 
 	fmt.Fprintf(&b, "1. CONFIRM THE PULL SECRET EXISTS:\n")
 	fmt.Fprintf(&b, "   Call pull-secret-get with %s%s name=%q.\n", projectArg, locationArg, pullSecret)

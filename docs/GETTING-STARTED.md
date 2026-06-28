@@ -256,6 +256,7 @@ domain to your deployment.
 | `iam: forbidden`                          | The service account lacks a role on that project — grant it.   |
 | `Cloudflare not configured`               | Set `CLOUDFLARE_API_TOKEN` (+ `CLOUDFLARE_ACCOUNT_ID` for domains). |
 | Deploy can't pull image / image not found | Image is private and no pull secret — bootstrap `ghcr-pull` (Part 3B) and pass it. |
+| Pod crash-loops with `exec format error`  | Wrong image architecture. The cluster is **linux/amd64**; building on Apple Silicon (M1/M2/M3) defaults to arm64. Rebuild with `docker build --platform linux/amd64 ...`. (`deployment-diagnose` flags this as `ArchitectureMismatch`.) |
 | `deploy.sh` says package is PUBLIC        | The script refuses to push a public image. Make the GHCR package private, then re-run. |
 | The AI doesn't see the tools              | MCP config not loaded — check the file path/JSON and restart the client. |
 

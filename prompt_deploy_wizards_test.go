@@ -37,7 +37,9 @@ func TestDeployAnApp_Playbook(t *testing.T) {
 	text := gp.Messages[0].Content.(*mcp.TextContent).Text
 	for _, want := range []string{"pull-secret-get", "deployment-deploy", "deployment-get",
 		"ghcr.io/lambogreny/app:abc123", "hello", "ghcr-pull", "project=\"p1\"",
-		"do not deploy again", "scripts/deploy.sh"} {
+		"do not deploy again", "scripts/deploy.sh",
+		// arch/amd64 gotcha precondition (guards against regression).
+		"linux/amd64", "exec format error", "--platform linux/amd64"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("deploy-an-app playbook missing %q:\n%s", want, text)
 		}

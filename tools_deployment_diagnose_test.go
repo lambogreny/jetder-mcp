@@ -149,6 +149,37 @@ func TestDiagnose_CrashLoop(t *testing.T) {
 	}
 }
 
+// ArchitectureMismatch must be diagnosed and rank BEFORE the co-occurring
+// CrashLoopBackOff (the arch fix is the actionable root cause). Secrets in the log
+// must still be redacted.
+func TestDiagnose_ArchMismatchBeatsCrashLoop(t *testing.T) {
+	// The pod exec-format-errors (arm64 image on amd64) and crash-loops; a secret is
+	// also in the log to confirm sanitization.
+	events := `[{"reason":"BackOff","message":"Back-off restarting failed container app"}]`
+	sse := "data: {\"log\":\"exec /app: exec format error\"}\n\n" +
+		"data: {\"log\":\"db token=SUPERSECRETarch999\"}\n\n"
+	srv := diagServer(t, `{"count":2,"ready":0,"succeeded":0,"failed":0}`, events, sse)
+	restore := jetder.SetLogTimeoutsForTest(60*time.Millisecond, 2*time.Second)
+	defer restore()
+	a := diagAdapter(t, srv)
+	sc := callDiag(t, a)
+	names := causeNames(sc)
+	if len(names) == 0 || names[0] != "ArchitectureMismatch" {
+		t.Fatalf("ArchitectureMismatch should be the FIRST cause, got %v", names)
+	}
+	// The actionable fix mentions the platform flag.
+	if cs, _ := sc["causes"].([]any); len(cs) > 0 {
+		first, _ := cs[0].(map[string]any)
+		if !strings.Contains(fmt.Sprintf("%v", first["suggestion"]), "linux/amd64") {
+			t.Fatalf("arch suggestion should mention linux/amd64: %v", first["suggestion"])
+		}
+	}
+	// Secret must not leak.
+	if strings.Contains(fmt.Sprintf("%v", sc), "SUPERSECRETarch999") {
+		t.Fatalf("arch diagnosis leaked a log secret: %v", sc)
+	}
+}
+
 // ImagePullBackOff from events.
 func TestDiagnose_ImagePull(t *testing.T) {
 	events := `[{"reason":"Failed","message":"Failed to pull image: ErrImagePull pull access denied"}]`

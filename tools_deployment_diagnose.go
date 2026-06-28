@@ -215,6 +215,16 @@ type diagPattern struct {
 
 var diagPatterns = []diagPattern{
 	{
+		// FIRST so it wins over the generic CrashLoopBackOff it usually co-occurs with:
+		// an arch mismatch (e.g. an arm64 image built on Apple Silicon running on the
+		// amd64 cluster) surfaces as "exec format error" and then crash-loops. The arch
+		// fix is the actionable root cause.
+		cause:      "ArchitectureMismatch",
+		needles:    []string{"exec format error", "cannot execute binary file", "no matching manifest for linux/amd64", "no match for platform", "exec user process caused"},
+		confidence: "high",
+		suggestion: "The image's CPU architecture does not match the cluster (linux/amd64). If you built on Apple Silicon (M1/M2/M3), rebuild for amd64: `docker build --platform linux/amd64 ...` (or `docker buildx build --platform linux/amd64`), push, and redeploy.",
+	},
+	{
 		cause:      "ImagePullBackOff",
 		needles:    []string{"ImagePullBackOff", "ErrImagePull", "pull access denied", "manifest unknown", "not found: manifest"},
 		confidence: "high",

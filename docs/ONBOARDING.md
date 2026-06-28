@@ -76,6 +76,10 @@ tool call before you approve it** — you're in control.
 - **The agent can't find the tools** — make sure step 2 ran without errors, then
   restart your AI client. If `jetder-mcp` isn't found, use the full path the
   installer printed (e.g. `~/.local/bin/jetder-mcp`) in the command.
+- **App crash-loops with "exec format error"** — your image was built for the wrong
+  CPU architecture. The cluster is **linux/amd64**; building on a Mac (M1/M2/M3)
+  defaults to arm64. Rebuild with `docker build --platform linux/amd64 ...` and
+  redeploy. (Ask the agent to "diagnose &lt;name&gt;" and it will spot this for you.)
 - **Buying/pointing a domain** — that needs a Cloudflare API token + account ID. See
   **[CLOUDFLARE-SETUP.md](./CLOUDFLARE-SETUP.md)** for a step-by-step walkthrough.
 - **Want every setting?** The full list of environment variables is in
