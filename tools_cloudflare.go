@@ -15,6 +15,7 @@ import (
 // configured) — the tools still register but return a clear error when invoked,
 // so a jetder-only server is unaffected.
 func registerCloudflareTools(server *mcp.Server, cf *cloudflare.Client) {
+	registerCFVerify(server, cf)
 	registerCFDomainSearch(server, cf)
 	registerCFDomainCheck(server, cf)
 	registerCFZoneLookup(server, cf)
